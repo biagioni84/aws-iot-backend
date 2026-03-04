@@ -1,0 +1,15 @@
+spring.application.name=cloud
+jwt.secret= someverylongsecretkeyforjwt1234567890
+aws.iot.endpoint = somendpoint-ats.iot.us-east-1.amazonaws.com
+aws.iot.clientId = iot-client
+logging.level.root=INFO
+logging.level.uy.plomo.cloud=DEBUG
+springdoc.swagger-ui.persistAuthorization=true
+springdoc.swagger-ui.tagsSorter=alpha
+#springdoc.default-consumes-media-type=application/json
+#springdoc.default-produces-media-type=application/json
+port.pool.start=9000
+port.pool.end=9999
+iot.instanceName=instance_name
+logging.level.org.springframework.security=DEBUG
+tunnel.server.host=<server_ip>

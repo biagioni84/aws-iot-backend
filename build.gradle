@@ -1,0 +1,93 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.2'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'uy.plomo'
+version = '0.0.1-SNAPSHOT'
+description = 'Demo project for Spring Boot'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// FIX: Dependencies MUST be defined before they are "observed" by the jar task
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-h2console'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    runtimeOnly 'com.h2database:h2'
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
+    implementation 'software.amazon.awssdk:dynamodb:2.41.23'
+    implementation 'software.amazon.awssdk:dynamodb-enhanced:2.41.23'
+    implementation 'software.amazon.awssdk.iotdevicesdk:aws-iot-device-sdk:1.30.0'
+    implementation 'org.json:json:20240303'
+    implementation 'org.mindrot:jbcrypt:0.4'
+
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.1"
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+}
+
+// Now we can configure the jar because the dependencies are fully defined
+jar {
+    enabled = true
+    archiveClassifier = 'lean'
+
+    manifest {
+        attributes(
+                'Main-Class': 'uy.plomo.cloud.CloudApplication',
+                // We use a closure here to ensure this is calculated only when needed
+                'Class-Path': configurations.runtimeClasspath.files.collect { "lib/" + it.name }.join(' ')
+        )
+    }
+}
+
+tasks.register('copyDependencies', Copy) {
+    description = 'Copies all runtime dependencies to build/libs/lib'
+    group = 'build'
+    from configurations.runtimeClasspath
+    into "${layout.buildDirectory.get()}/libs/lib"
+}
+
+tasks.named('build') {
+    finalizedBy(copyDependencies)
+}
+
+bootJar {
+    enabled = false
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.register('updateApp', Copy) {
+    description = 'Only updates the lean JAR in the dist folder'
+    group = 'distribution'
+
+    dependsOn jar // Only recompiles your code, doesn't touch dependencies
+
+    into "${layout.buildDirectory.get()}/dist"
+    from("${layout.buildDirectory.get()}/libs") {
+        include "*-lean.jar"
+        rename { 'app.jar' }
+    }
+}
