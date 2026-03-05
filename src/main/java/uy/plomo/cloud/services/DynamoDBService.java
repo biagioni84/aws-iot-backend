@@ -19,6 +19,9 @@ public class DynamoDBService {
 
     private final DynamoDbAsyncClient dynamo;
 
+    private static final String TABLE_USERS   = "users";
+    private static final String TABLE_GATEWAYS = "iot-gateways";
+
     public DynamoDBService(@Value("${aws.region}") String region) {
         this.dynamo = DynamoDbAsyncClient.builder()
                 .region(Region.of(region))
@@ -60,29 +63,9 @@ public class DynamoDBService {
     // Users
     // -------------------------------------------------------------------------
 
-    public CompletableFuture<String> getPasswordHash(String username) {
-        QueryRequest request = QueryRequest.builder()
-                .tableName("users")
-                .keyConditionExpression("username = :username")
-                .expressionAttributeValues(Map.of(
-                        ":username", AttributeValue.builder().s(username).build()
-                ))
-                .limit(1)
-                .build();
-
-        return dynamo.query(request).thenApply(response -> {
-            if (response.items().isEmpty()) {
-                return "";
-            }
-            return response.items().get(0)
-                    .getOrDefault("password", AttributeValue.builder().s("").build())
-                    .s();
-        });
-    }
-
     public CompletableFuture<Map<String, Object>> getUserSummary(String username) {
         QueryRequest request = QueryRequest.builder()
-                .tableName("users")
+                .tableName(TABLE_USERS)
                 .keyConditionExpression("username = :username")
                 .expressionAttributeValues(Map.of(
                         ":username", AttributeValue.builder().s(username).build()
@@ -149,7 +132,7 @@ public class DynamoDBService {
 
     private CompletableFuture<QueryResponse> queryGateway(String gwId) {
         QueryRequest request = QueryRequest.builder()
-                .tableName("iot-gateways")
+                .tableName(TABLE_GATEWAYS)
                 .keyConditionExpression("gateway_id = :gwId")
                 .expressionAttributeValues(Map.of(
                         ":gwId", AttributeValue.builder().s(gwId).build()
@@ -167,7 +150,7 @@ public class DynamoDBService {
      */
     public CompletableFuture<Void> createTunnel(String gwId, String tunnelId, TunnelRequest tunnel) {
         UpdateItemRequest request = UpdateItemRequest.builder()
-                .tableName("iot-gateways")
+                .tableName(TABLE_GATEWAYS)
                 .key(Map.of("gateway_id", AttributeValue.builder().s(gwId).build()))
                 .updateExpression("SET tunnels.#tid = :tunnel")
                 .conditionExpression("attribute_not_exists(tunnels.#tid)")
@@ -189,7 +172,7 @@ public class DynamoDBService {
      */
     public CompletableFuture<Void> updateTunnel(String gwId, String tunnelId, TunnelRequest tunnel) {
         UpdateItemRequest request = UpdateItemRequest.builder()
-                .tableName("iot-gateways")
+                .tableName(TABLE_GATEWAYS)
                 .key(Map.of("gateway_id", AttributeValue.builder().s(gwId).build()))
                 .updateExpression("SET tunnels.#tid = :tunnel")
                 .conditionExpression("attribute_exists(tunnels.#tid)")
@@ -212,7 +195,7 @@ public class DynamoDBService {
      */
     public CompletableFuture<Void> deleteTunnel(String gwId, String tunnelId) {
         UpdateItemRequest request = UpdateItemRequest.builder()
-                .tableName("iot-gateways")
+                .tableName(TABLE_GATEWAYS)
                 .key(Map.of("gateway_id", AttributeValue.builder().s(gwId).build()))
                 .updateExpression("REMOVE tunnels.#tid")
                 .conditionExpression("attribute_exists(tunnels.#tid)")

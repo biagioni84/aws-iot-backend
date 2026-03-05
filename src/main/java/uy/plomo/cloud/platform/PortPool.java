@@ -3,7 +3,7 @@ package uy.plomo.cloud.platform;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 
 @Component
 public class PortPool {
@@ -14,7 +14,7 @@ public class PortPool {
 
     public record PortEntry(String user, PortStatus status) {}
 
-    private final Map<Integer, PortEntry> portMap = new ConcurrentHashMap<>();
+    private final Map<Integer, PortEntry> portMap = new HashMap<>();
 
     /**
      * Initialize the pool with a range of ports [rangeStart, rangeEnd] inclusive.
@@ -25,28 +25,12 @@ public class PortPool {
         }
     }
 
-    /**
-     * Acquire the first available free port, marking it as IN_USE for the given user.
-     * Returns the port number, or throws if none are available.
-     */
-    public synchronized int acquirePort(String user) {
-        return portMap.entrySet().stream()
-                .filter(e -> e.getValue().status() == PortStatus.FREE)
-                .map(Map.Entry::getKey)
-                .findFirst()
-                .map(port -> {
-                    portMap.put(port, new PortEntry(user, PortStatus.IN_USE));
-                    return port;
-                })
-                .orElseThrow(() -> new IllegalStateException("No free ports available in the pool"));
-    }
     public synchronized int acquirePort(String user, int port) {
         PortEntry entry = portMap.get(port);
         if (entry == null) {
             throw new IllegalArgumentException("Port " + port + " is not managed by this pool");
         }
         // Idempotente: si el mismo usuario ya tiene el puerto, devolver sin error.
-        // Esto permite llamar a tunnelStart varias veces sin necesidad de stop previo.
         if (entry.status() == PortStatus.IN_USE && user.equals(entry.user())) {
             return port;
         }

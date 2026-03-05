@@ -6,13 +6,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import software.amazon.awssdk.enhanced.dynamodb.document.EnhancedDocument;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import uy.plomo.cloud.services.DynamoDBService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
 import uy.plomo.cloud.services.DynamoDBService.TunnelRequest;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 @RestController
 @RequestMapping("/api/v1")
 @Tag(name = "03. Tunnels", description = "CRUD and start/stop tunnels")
+@PreAuthorize("hasRole('USER')")
 @Slf4j
 public class TunnelController {
     @Value("${tunnel.server.host}")
@@ -83,7 +88,7 @@ public class TunnelController {
                                             (String) tunnel.get("dst_port"),
                                             "iot-" + gwId,
                                             gwSummary.get("pubkey").toString());
-                                    command.put("dst-addr", serverHost());
+                                    command.put("dst-addr", serverHost);
                                     command.put("dst-port", dstPort);
                                 }
 
@@ -112,7 +117,7 @@ public class TunnelController {
                     command.put("src-port", tunnel.get("src_port"));
 
                     if ("on".equals(tunnel.get("use_this_server"))) {
-                        command.put("dst-addr", serverHost());
+                        command.put("dst-addr", serverHost);
                         command.put("dst-port", tunnel.get("dst_port"));
                     }
 
@@ -122,10 +127,7 @@ public class TunnelController {
 
                     return mqttService.sendAsync(gwId, payload)
                             .thenApply(response -> {
-                                // BUG-5 FIX: solo liberar el puerto si el tunnel usaba este servidor
-                                if ("on".equals(tunnel.get("use_this_server"))) {
-                                    portPoolService.releasePort((String) tunnel.get("dst_port"));
-                                }
+                                portPoolService.releasePort((String) tunnel.get("dst_port"));
                                 return response;
                             });
                 })
@@ -213,7 +215,4 @@ public class TunnelController {
     }
 
 
-    private String serverHost() {
-        return serverHost;
-    }
 }

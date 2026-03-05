@@ -15,8 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.stereotype.Service;
 import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.crt.mqtt5.*;
 import software.amazon.awssdk.crt.mqtt5.packets.*;
@@ -199,10 +199,9 @@ public class MqttService {
      */
     public CompletableFuture<Map<String, Object>> sendAsync(String gwId, JSONObject payload) {
         if (!connected.get()) {
-            // BUG-6 FIX: devolver un future fallido en lugar de 200 con body de error.
-            // GlobalExceptionHandler convierte ServiceUnavailableException en 503.
-            return CompletableFuture.failedFuture(
-                    new ServiceUnavailableException("MQTT broker not connected"));
+            return CompletableFuture.completedFuture(Map.of(
+                    "error", "MQTT_DISCONNECTED",
+                    "message", "Backend is not connected to the broker"));
         }
         String requestId = UUID.randomUUID().toString();
         String topic = String.format(CMD_REQUEST_PATTERN, gwId, requestId);
@@ -213,11 +212,17 @@ public class MqttService {
                 .orTimeout(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .thenApply(JsonConverter::toMap)
                 .exceptionally(ex -> {
-                    log.warn("Request {} to gateway {} failed: {}", requestId, gwId, ex.getMessage());
                     pendingRequests.cancel(requestId); // clean up if still pending
-                    return Map.of("error", "GATEWAY_TIMEOUT",
-                            "message", "No response from gateway within " + RESPONSE_TIMEOUT_SECONDS + "s",
-                            "requestId", requestId);
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    log.warn("Request {} to gateway {} failed: {}", requestId, gwId, cause.getMessage());
+                    // Return a failed future so GlobalExceptionHandler converts it to the right HTTP status:
+                    // TimeoutException → 504, everything else → 503
+                    if (cause instanceof java.util.concurrent.TimeoutException) {
+                        throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT,
+                                "No response from gateway within " + RESPONSE_TIMEOUT_SECONDS + "s");
+                    }
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                            "Gateway request failed: " + cause.getMessage());
                 });
     }
 
@@ -234,12 +239,6 @@ public class MqttService {
             log.debug("PubAck: {}", pubAck.getReasonCode());
         } catch (Exception e) {
             throw new RuntimeException("Failed to publish to topic: " + topic, e);
-        }
-    }
-
-    public static class ServiceUnavailableException extends ResponseStatusException {
-        public ServiceUnavailableException(String message) {
-            super(HttpStatus.SERVICE_UNAVAILABLE, message);
         }
     }
 }

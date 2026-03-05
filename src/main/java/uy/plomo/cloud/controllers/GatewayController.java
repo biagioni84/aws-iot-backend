@@ -5,6 +5,7 @@ import org.json.JSONObject;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.plomo.cloud.services.MqttService;
 
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
+@PreAuthorize("hasRole('USER')")
 @Slf4j
 public class GatewayController {
 
