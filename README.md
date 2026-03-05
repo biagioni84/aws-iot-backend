@@ -21,6 +21,7 @@ Spring Boot API  ──MQTT──▶  AWS IoT Core  ──▶  IoT Gateways
 - JWT tokens embed the list of gateway IDs the user owns — no DB lookup on every request
 - A `GatewayOwnershipFilter` validates ownership on every `/api/v1/{gwId}/**` call, returning 404 (not 403) to avoid gateway enumeration
 - Port pool is held in-memory and managed by `PortPoolService` + `LightsailRemoteAccess`
+- Each gateway gets one line in `/home/tunneluser/.ssh/authorized_keys` with a `permitlisten` restriction — OpenSSH enforces at protocol level that each key can only open its assigned port
 
 ---
 
@@ -44,10 +45,10 @@ src/main/java/uy/plomo/cloud/
 ├── CloudApplication.java          # Entry point
 ├── config/
 │   ├── SecurityConfig.java        # JWT filter chain, CORS
-│   ├── GlobalExceptionHandler.java
 │   ├── OpenApiConfig.java         # Swagger/OpenAPI setup
-│   ├── PortPoolConfig.java        # Port range bean
-│   └── WebConfig.java
+│   └── PortPoolConfig.java        # Port range bean
+├── exception/
+│   └── GlobalExceptionHandler.java
 ├── controllers/
 │   ├── LoginController.java       # POST /auth/login → JWT
 │   ├── AdminController.java       # GET /api/v1/summary, /gateways
@@ -63,9 +64,110 @@ src/main/java/uy/plomo/cloud/
 │   ├── PendingRequestsService.java # Request correlation map
 │   └── PortPoolService.java       # Port assignment + SSH key mgmt
 └── platform/
-    ├── PortPool.java              # Thread-safe port pool
-    └── LightsailRemoteAccess.java # Shell commands on the host
+    ├── PortPool.java              # Thread-safe in-memory port pool
+    └── LightsailRemoteAccess.java # Host-level SSH and firewall ops
 ```
+
+---
+
+## Configuration (`application.properties`)
+
+Copy `application.properties.example` to `application.properties` and fill in all values.
+
+```properties
+# JWT
+jwt.secret=<min 32-char secret>
+jwt.expiration-ms=86400000
+
+# CORS — comma-separated list of allowed origins
+cors.allowed-origins=http://localhost:5173
+
+# Port pool range (in-memory, assigned to SSH tunnels)
+port.pool.start=9000
+port.pool.end=10000
+
+# SSH tunnel server hostname (returned to gateways on tunnel start)
+tunnel.server.host=<your-server-hostname>
+
+# AWS region
+aws.region=us-east-1
+
+# AWS IoT MQTT
+aws.iot.endpoint=<your-endpoint>.iot.<region>.amazonaws.com
+aws.iot.clientId=cloud-backend
+
+# AWS Lightsail instance name (for firewall rule management)
+iot.instanceName=<your-lightsail-instance-name>
+
+# OS user that owns the SSH authorized_keys file (default: tunneluser)
+ssh.tunnel.user=tunneluser
+```
+
+AWS credentials are resolved via the default SDK credential chain (IAM role, `~/.aws/credentials`, env vars).
+
+---
+
+## Server Setup (one-time)
+
+### 1. Create the tunnel user
+
+```bash
+sudo useradd -m -s /usr/sbin/nologin tunneluser
+sudo passwd -l tunneluser
+sudo mkdir -p /home/tunneluser/.ssh
+sudo touch /home/tunneluser/.ssh/authorized_keys
+sudo chown -R tunneluser:tunneluser /home/tunneluser/.ssh
+sudo chmod 700 /home/tunneluser/.ssh
+sudo chmod 600 /home/tunneluser/.ssh/authorized_keys
+```
+
+### 2. Configure sshd_config
+
+Add the following block at the end of `/etc/ssh/sshd_config` (replace `tunneluser` if you changed `ssh.tunnel.user`):
+
+```
+Match User tunneluser
+    AllowTcpForwarding yes
+    GatewayPorts clientspecified
+    PermitTTY no
+    ForceCommand echo 'Tunnel only'
+    X11Forwarding no
+```
+
+Then reload sshd:
+
+```bash
+sudo systemctl reload ssh
+```
+
+This block is static — it never needs to change. All dynamic configuration (which gateway can use which port) lives in `authorized_keys` and is managed by the application.
+
+### 3. Configure sudoers
+
+The application needs to read and write `authorized_keys` without a password prompt. Replace `ubuntu` with the OS user running the Java process:
+
+```bash
+sudo visudo -f /etc/sudoers.d/cloud-app
+```
+
+```
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/tee /home/tunneluser/.ssh/authorized_keys
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/cat /home/tunneluser/.ssh/authorized_keys
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/lsof -P -i -n
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/kill -9 *
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/aws lightsail *
+```
+
+### How authorized_keys works
+
+Each gateway that has an active tunnel gets one line:
+
+```
+restrict,port-forwarding,permitlisten="0.0.0.0:9001" ssh-ed25519 AAAA... gw-001
+restrict,port-forwarding,permitlisten="0.0.0.0:9002" ssh-ed25519 AAAA... gw-002
+```
+
+OpenSSH enforces at protocol level that `gw-001` can only open port `9001` — no extra validation needed in Java. Lines are added on `tunnel start` and removed on `tunnel stop` or `tunnel delete`.
 
 ---
 
@@ -109,8 +211,8 @@ All authenticated endpoints require `Authorization: Bearer <token>`.
 | `POST` | `/api/v1/{gwId}/tunnels` | Create new tunnel (UUID assigned by server) |
 | `PUT` | `/api/v1/{gwId}/tunnels/{tunnelId}` | Update tunnel config |
 | `DELETE` | `/api/v1/{gwId}/tunnels/{tunnelId}` | Stop + delete tunnel |
-| `POST` | `/api/v1/{gwId}/tunnels/{tunnelId}/start` | Start tunnel (assigns port, updates SSH keys) |
-| `POST` | `/api/v1/{gwId}/tunnels/{tunnelId}/stop` | Stop tunnel (releases port) |
+| `POST` | `/api/v1/{gwId}/tunnels/{tunnelId}/start` | Start tunnel (assigns port, updates SSH keys, opens firewall) |
+| `POST` | `/api/v1/{gwId}/tunnels/{tunnelId}/stop` | Stop tunnel (releases port, removes SSH key, closes firewall) |
 
 **Tunnel request body (create / update):**
 ```json
@@ -123,7 +225,7 @@ All authenticated endpoints require `Authorization: Bearer <token>`.
 }
 ```
 
-> When `use_this_server` is `"on"`, the server assigns a port from the pool, registers an SSH authorized key for the gateway, and opens the Lightsail firewall rule automatically.
+> When `use_this_server` is `"on"`, the server assigns a port from the pool, adds a `permitlisten`-restricted line to `authorized_keys`, and opens the Lightsail firewall rule. When `"off"`, the gateway manages its own tunnel endpoint.
 
 ---
 
@@ -134,31 +236,6 @@ GET|POST|PUT|DELETE /api/v1/{gwId}/proxy/{*path}
 ```
 
 Forwards any request to a gateway via MQTT and returns its response. Body is forwarded as the `command` field.
-
----
-
-## Configuration (`application.properties`)
-
-```properties
-# JWT
-jwt.secret=<min 32-char secret>
-
-# Port pool range (in-memory)
-port.pool.start=9000
-port.pool.end=10000
-
-# SSH tunnel server hostname
-tunnel.server.host=<your-server-hostname>
-
-# AWS IoT MQTT
-aws.iot.endpoint=<your-endpoint>.iot.<region>.amazonaws.com
-aws.iot.clientId=cloud-backend
-
-# AWS Lightsail instance name (for firewall management)
-iot.instanceName=<your-lightsail-instance-name>
-```
-
-AWS credentials are resolved via the default SDK credential chain (IAM role, `~/.aws/credentials`, env vars).
 
 ---
 
@@ -175,7 +252,7 @@ AWS credentials are resolved via the default SDK credential chain (IAM role, `~/
 | Attribute | Type | Notes |
 |---|---|---|
 | `gateway_id` | String (PK) | |
-| `pubkey` | String | SSH public key of the gateway |
+| `pubkey` | String | SSH public key of the gateway (ed25519 recommended) |
 | `tunnels` | Map | Map of `tunnelId → TunnelConfig` |
 
 Each tunnel entry in the map:
@@ -234,13 +311,14 @@ java -jar build/libs/app.jar \
   --tunnel.server.host=<host>
 ```
 
-Swagger UI is available at: `http://localhost:8080/swagger-ui/index.html`
+Swagger UI: `http://localhost:8080/swagger-ui/index.html`
 
 ---
 
 ## Security Notes
 
-- CORS is currently restricted to `http://localhost:5173` — update `SecurityConfig` for production.
-- The `GatewayOwnershipFilter` returns **404** (not 403) on ownership mismatch to prevent gateway ID enumeration.
-- JWT tokens expire after **24 hours**.
-- Port pool state is **in-memory only** — restarting the server will reset it. Tunnels that were active before a restart will need to be stopped and restarted manually.
+- CORS origins are configured via `cors.allowed-origins` — comma-separated, e.g. `http://localhost:5173,https://app.example.com`
+- The `GatewayOwnershipFilter` returns **404** (not 403) on ownership mismatch to prevent gateway ID enumeration
+- JWT tokens expire after the duration set in `jwt.expiration-ms` (default 24h)
+- Port pool state is **in-memory only** — restarting the server resets it. Gateways with active tunnels will need to reconnect, which is idempotent (calling `start` on an already-started tunnel is safe)
+- Shell commands on the host use `ProcessBuilder` with separated arguments — no shell injection risk regardless of gateway ID or pubkey content

@@ -25,10 +25,14 @@ public class AdminController {
 
     private final DynamoDBService dynamoDBService;
     private final MqttService mqttService;
+    private final LightsailRemoteAccess lightsailRemoteAccess;
 
-    public AdminController(DynamoDBService dynamoDBService, MqttService mqttService) {
+    public AdminController(DynamoDBService dynamoDBService,
+                           MqttService mqttService,
+                           LightsailRemoteAccess lightsailRemoteAccess) {
         this.dynamoDBService = dynamoDBService;
         this.mqttService = mqttService;
+        this.lightsailRemoteAccess = lightsailRemoteAccess;
     }
 
     /**
@@ -41,11 +45,13 @@ public class AdminController {
 
         return dynamoDBService.getUserSummary(username)
                 .thenCompose(userItem -> {
-                    List<String> gateways = extractGatewayList(userItem);
+                    List<String> gateways = userItem.containsKey("gateways")
+                            ? (List<String>) userItem.get("gateways")
+                            : List.of();
                     userItem.put("gateways", new HashMap<String, Object>());
                     // ---- FUTURE SSH (en paralelo, NO espera gateways) ----
                     CompletableFuture<List<Map<String, Object>>> sshFuture =
-                            CompletableFuture.supplyAsync(LightsailRemoteAccess::listSshConnections);
+                            CompletableFuture.supplyAsync(lightsailRemoteAccess::listSshConnections);
                     // Fan out gateway DB lookups in parallel
                     List<CompletableFuture<Void>> gwFutures = gateways.stream()
                             .map(gw -> dynamoDBService.getGatewaySummary(gw)
@@ -78,7 +84,9 @@ public class AdminController {
 
         return dynamoDBService.getUserSummary(username)
                 .thenCompose(userItem -> {
-                    List<String> gateways = extractGatewayList(userItem);
+                    List<String> gateways = userItem.containsKey("gateways")
+                            ? (List<String>) userItem.get("gateways")
+                            : List.of();
 
                     JSONObject result = new JSONObject();
 
@@ -104,20 +112,5 @@ public class AdminController {
                                 return ResponseEntity.ok(JsonConverter.toMap(result.toString()));
                             });
                 });
-    }
-
-    /**
-     * Extrae la lista de gateway IDs del mapa de usuario de forma segura.
-     * JSONObject.toMap() puede devolver List<Object> en lugar de List<String>,
-     * por lo que casteamos elemento a elemento para evitar ClassCastException.
-     */
-    @SuppressWarnings("unchecked")
-    private static List<String> extractGatewayList(Map<String, Object> userItem) {
-        Object raw = userItem.get("gateways");
-        if (!(raw instanceof List<?> list)) return List.of();
-        return list.stream()
-                .filter(o -> o instanceof String)
-                .map(o -> (String) o)
-                .toList();
     }
 }

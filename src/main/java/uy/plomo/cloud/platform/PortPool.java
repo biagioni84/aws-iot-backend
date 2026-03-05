@@ -45,6 +45,11 @@ public class PortPool {
         if (entry == null) {
             throw new IllegalArgumentException("Port " + port + " is not managed by this pool");
         }
+        // Idempotente: si el mismo usuario ya tiene el puerto, devolver sin error.
+        // Esto permite llamar a tunnelStart varias veces sin necesidad de stop previo.
+        if (entry.status() == PortStatus.IN_USE && user.equals(entry.user())) {
+            return port;
+        }
         if (entry.status() != PortStatus.FREE) {
             throw new IllegalStateException("Port " + port + " is already in use by: " + entry.user());
         }
