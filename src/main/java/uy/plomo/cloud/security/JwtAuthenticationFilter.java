@@ -40,13 +40,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String username = claims.getSubject();
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             // Extract roles from the token claims
-            System.out.println("CLAIMS: "+ claims);
             List<String> roles = claims.get("roles", List.class);
-            System.out.println("ROLES:" + roles);
             List<SimpleGrantedAuthority> authorities = roles.stream()
                     .map(SimpleGrantedAuthority::new)
                     .toList();
-            System.out.println("authorities:"+ authorities);
             // Build authentication WITHOUT calling the database
             UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                     username, null, authorities);

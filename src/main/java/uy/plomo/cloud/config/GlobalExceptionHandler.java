@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 import uy.plomo.cloud.services.DynamoDBService;
 
-import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 @RestControllerAdvice
@@ -21,6 +20,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNotFound(DynamoDBService.ResourceNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("NOT_FOUND", ex.getMessage()));
+    }
+
+    // FIX: faltaba este handler — sin él, ConflictException caía en handleGeneric() y devolvía 500
+    @ExceptionHandler(DynamoDBService.ConflictException.class)
+    public ResponseEntity<ErrorResponse> handleConflict(DynamoDBService.ConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("CONFLICT", ex.getMessage()));
     }
 
     @ExceptionHandler(TimeoutException.class)

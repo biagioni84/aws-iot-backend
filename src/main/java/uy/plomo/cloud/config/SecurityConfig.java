@@ -1,19 +1,15 @@
 package uy.plomo.cloud.config;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.context.SecurityContextHolderStrategy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import uy.plomo.cloud.security.GatewayOwnershipFilter;
 import uy.plomo.cloud.security.JwtAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
@@ -24,11 +20,20 @@ import java.util.List;
 @EnableWebSecurity
 @Configuration
 public class SecurityConfig {
-    @Autowired
-    private JwtAuthenticationFilter jwtAuthFilter;
-    @Autowired
-    private GatewayOwnershipFilter gatewayOwnershipFilter;
-    // Swagger UI endpoints that should be publicly accessible
+
+    private final JwtAuthenticationFilter jwtAuthFilter;
+    private final GatewayOwnershipFilter gatewayOwnershipFilter;
+
+    @Value("${cors.allowed-origins}")
+    private String allowedOrigins;
+
+    // FIX: constructor injection en lugar de @Autowired field injection
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter,
+                          GatewayOwnershipFilter gatewayOwnershipFilter) {
+        this.jwtAuthFilter = jwtAuthFilter;
+        this.gatewayOwnershipFilter = gatewayOwnershipFilter;
+    }
+
     private static final String[] SWAGGER_WHITELIST = {
             "/swagger-ui/**",
             "/swagger-ui.html",
@@ -37,23 +42,21 @@ public class SecurityConfig {
             "/swagger-resources/**",
             "/webjars/**"
     };
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
-
-            .cors(cors -> cors.configurationSource(request -> {
-                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-                CorsConfiguration config = new CorsConfiguration();
-                config.setAllowedOrigins(List.of("http://localhost:5173"));
-                config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-                config.setAllowedHeaders(List.of("*"));
-                source.registerCorsConfiguration("/**", config);
-                config.setAllowCredentials(true);
-                return config;
-            }))
+                .cors(cors -> cors.configurationSource(request -> {
+                    CorsConfiguration config = new CorsConfiguration();
+                    config.setAllowedOrigins(List.of(allowedOrigins.split(",")));
+                    config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+                    config.setAllowedHeaders(List.of("*"));
+                    config.setAllowCredentials(true);
+                    return config;
+                }))
                 .authorizeHttpRequests(auth -> auth
-                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll() // ← add this
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/auth/**").permitAll()
                         .requestMatchers(SWAGGER_WHITELIST).permitAll()
                         .anyRequest().authenticated()
@@ -61,20 +64,15 @@ public class SecurityConfig {
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(gatewayOwnershipFilter, JwtAuthenticationFilter.class);
+
         return http.build();
     }
-    @Bean
-    public SecurityContextHolderStrategy securityContextHolderStrategy() {
-        return SecurityContextHolder.getContextHolderStrategy();
-    }
-    @Bean
-    public ApplicationRunner configureSecurityContext() {
-        return args -> SecurityContextHolder.setStrategyName(
-                SecurityContextHolder.MODE_INHERITABLETHREADLOCAL
-        );
-    }
+
+    // FIX: eliminados SecurityContextHolderStrategy bean y ApplicationRunner.
+    // Ambos causaban un split-brain: SecurityContextHolderFilter usaba el bean
+    // (ThreadLocal capturado en tiempo de creación) mientras JwtAuthenticationFilter
+    // usaba SecurityContextHolder.getContext() con la estrategia cambiada por el
+    // ApplicationRunner (InheritableThreadLocal), resultando en dos contextos distintos.
+    // @AuthenticationPrincipal se resuelve sincrónicamente antes del async, por lo
+    // que MODE_INHERITABLETHREADLOCAL no aporta nada útil aquí.
 }
-
-
-
-

@@ -1,9 +1,10 @@
 package uy.plomo.cloud.services;
 
+import lombok.Getter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import uy.plomo.cloud.platform.PortPool;
-import uy.plomo.cloud.platform.LightsailRemoteAccess;
+
 
 import static uy.plomo.cloud.platform.LightsailRemoteAccess.*;
 
@@ -11,6 +12,7 @@ import static uy.plomo.cloud.platform.LightsailRemoteAccess.*;
 public class PortPoolService {
 
     private final PortPool portPool;
+    @Getter
     @Value("${tunnel.server.host}")
     private String serverHost;
 
@@ -36,7 +38,4 @@ public class PortPoolService {
         return String.valueOf(port);
     }
 
-    public String getServerHost() {
-        return serverHost;
-    }
 }

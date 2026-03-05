@@ -11,6 +11,7 @@ import uy.plomo.cloud.platform.LightsailRemoteAccess;
 import uy.plomo.cloud.services.DynamoDBService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.utils.JsonConverter;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,16 +41,22 @@ public class AdminController {
             @AuthenticationPrincipal String username) {
 
         return dynamoDBService.getUserSummary(username)
-                .thenCompose(userItem -> {
+                .thenCompose(rawItem -> {
+                    // FIX: DynamoDB (y los mocks) pueden devolver mapas inmutables (Map.of).
+                    // Siempre copiamos a un HashMap mutable antes de mutarlo.
+                    Map<String, Object> userItem = new HashMap<>(rawItem);
+
                     List<String> gateways = userItem.containsKey("gateways")
                             ? (List<String>) userItem.get("gateways")
                             : List.of();
+
                     userItem.put("gateways", new HashMap<String, Object>());
-//                    System.out.println(gateways);
-                    // ---- FUTURE SSH (en paralelo, NO espera gateways) ----
+
+                    // SSH connections en paralelo (no bloquea gateways)
                     CompletableFuture<List<Map<String, Object>>> sshFuture =
                             CompletableFuture.supplyAsync(LightsailRemoteAccess::listSshConnections);
-                    // Fan out gateway DB lookups in parallel
+
+                    // Fan-out de gateway lookups en paralelo
                     List<CompletableFuture<Void>> gwFutures = gateways.stream()
                             .map(gw -> dynamoDBService.getGatewaySummary(gw)
                                     .thenAccept(gwItem -> {
@@ -62,18 +69,12 @@ public class AdminController {
                     CompletableFuture<Void> gatewaysDone =
                             CompletableFuture.allOf(gwFutures.toArray(new CompletableFuture[0]));
 
-                    // ---- combinar TODO ----
                     return gatewaysDone
                             .thenCombine(sshFuture, (v, sshList) -> {
                                 userItem.put("active_tunnels", sshList);
                                 log.trace("Summary response for {}: {}", username, userItem);
                                 return ResponseEntity.ok(userItem);
                             });
-//                    return CompletableFuture.allOf(gwFutures.toArray(new CompletableFuture[0]))
-//                            .thenApply(v -> {
-//                                log.trace("Summary response for {}: {}", username, userItem);
-//                                return ResponseEntity.ok(userItem);
-//                            });
                 });
     }
 
@@ -92,14 +93,13 @@ public class AdminController {
 
                     JSONObject result = new JSONObject();
 
-                    // Fan out MQTT requests in parallel — no sequential blocking
                     List<CompletableFuture<Void>> mqttFutures = gateways.stream()
                             .map(gw -> {
                                 JSONObject payload = new JSONObject();
                                 payload.put("path", "GET:/summary");
                                 payload.put("command", new JSONObject());
 
-                                return mqttService.sendAsync( gw, payload)
+                                return mqttService.sendAsync(gw, payload)
                                         .thenAccept(gwStatus -> {
                                             synchronized (result) {
                                                 result.put(gw, gwStatus);

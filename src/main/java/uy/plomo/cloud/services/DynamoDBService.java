@@ -173,7 +173,6 @@ public class DynamoDBService {
                 .expressionAttributeNames(Map.of("#tid", tunnelId))
                 .expressionAttributeValues(Map.of(":tunnel", tunnelToAttributeValue(tunnel)))
                 .build();
-        System.out.println(tunnel);
         return dynamo.updateItem(request)
                 .thenApply(r -> (Void) null)
                 .exceptionally(ex -> {
