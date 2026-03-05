@@ -25,7 +25,8 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
     }
 
-    private final long EXPIRATION = 86400000; // 1 day
+    @Value("${jwt.expiration-ms:86400000}")
+    private long expirationMs;
 
     public String generateToken(String username,
                                 Collection<? extends GrantedAuthority> authorities,
@@ -38,7 +39,7 @@ public class JwtService {
                 .claim("roles", roles)
                 .claim("gateways", gatewayIds)   // embed gateway ownership
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION))
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(key)
                 .compact();
     }

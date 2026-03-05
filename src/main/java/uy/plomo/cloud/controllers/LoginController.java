@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.DynamoDBService;
 
@@ -45,9 +44,7 @@ public class LoginController {
                     }
 
                     // Extract gateway list from user record
-                    List<String> gatewayIds = userItem.containsKey("gateways")
-                            ? (List<String>) userItem.get("gateways")
-                            : List.of();
+                    List<String> gatewayIds = extractGatewayList(userItem);
 
                     String token = jwtService.generateToken(
                             req.username(),
@@ -56,5 +53,15 @@ public class LoginController {
 
                     return new LoginResponse(token, "ok");
                 });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> extractGatewayList(Map<String, Object> userItem) {
+        Object raw = userItem.get("gateways");
+        if (!(raw instanceof List<?> list)) return List.of();
+        return list.stream()
+                .filter(o -> o instanceof String)
+                .map(o -> (String) o)
+                .toList();
     }
 }

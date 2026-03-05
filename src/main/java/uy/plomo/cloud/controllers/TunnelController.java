@@ -7,15 +7,12 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import software.amazon.awssdk.enhanced.dynamodb.document.EnhancedDocument;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import uy.plomo.cloud.services.DynamoDBService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
 import uy.plomo.cloud.services.DynamoDBService.TunnelRequest;
 
 import java.net.URI;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -125,7 +122,10 @@ public class TunnelController {
 
                     return mqttService.sendAsync(gwId, payload)
                             .thenApply(response -> {
-                                portPoolService.releasePort((String) tunnel.get("dst_port"));
+                                // BUG-5 FIX: solo liberar el puerto si el tunnel usaba este servidor
+                                if ("on".equals(tunnel.get("use_this_server"))) {
+                                    portPoolService.releasePort((String) tunnel.get("dst_port"));
+                                }
                                 return response;
                             });
                 })
@@ -213,10 +213,6 @@ public class TunnelController {
     }
 
 
-    /**
-     * Centralizes the server host so it's only hardcoded in one place.
-     * TODO: move this to application.properties as tunnel.server.host
-     */
     private String serverHost() {
         return serverHost;
     }

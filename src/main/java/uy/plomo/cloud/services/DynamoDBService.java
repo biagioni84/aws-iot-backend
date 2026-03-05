@@ -3,6 +3,7 @@ package uy.plomo.cloud.services;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.enhanced.dynamodb.document.EnhancedDocument;
 import software.amazon.awssdk.regions.Region;
@@ -18,9 +19,9 @@ public class DynamoDBService {
 
     private final DynamoDbAsyncClient dynamo;
 
-    public DynamoDBService() {
+    public DynamoDBService(@Value("${aws.region}") String region) {
         this.dynamo = DynamoDbAsyncClient.builder()
-                .region(Region.US_EAST_1)
+                .region(Region.of(region))
                 .build();
     }
 

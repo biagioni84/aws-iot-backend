@@ -1,4 +1,4 @@
-package uy.plomo.cloud.config;
+package uy.plomo.cloud.exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;

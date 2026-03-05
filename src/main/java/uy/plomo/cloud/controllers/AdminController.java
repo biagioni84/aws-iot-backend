@@ -11,7 +11,6 @@ import uy.plomo.cloud.platform.LightsailRemoteAccess;
 import uy.plomo.cloud.services.DynamoDBService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.utils.JsonConverter;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,22 +40,13 @@ public class AdminController {
             @AuthenticationPrincipal String username) {
 
         return dynamoDBService.getUserSummary(username)
-                .thenCompose(rawItem -> {
-                    // FIX: DynamoDB (y los mocks) pueden devolver mapas inmutables (Map.of).
-                    // Siempre copiamos a un HashMap mutable antes de mutarlo.
-                    Map<String, Object> userItem = new HashMap<>(rawItem);
-
-                    List<String> gateways = userItem.containsKey("gateways")
-                            ? (List<String>) userItem.get("gateways")
-                            : List.of();
-
+                .thenCompose(userItem -> {
+                    List<String> gateways = extractGatewayList(userItem);
                     userItem.put("gateways", new HashMap<String, Object>());
-
-                    // SSH connections en paralelo (no bloquea gateways)
+                    // ---- FUTURE SSH (en paralelo, NO espera gateways) ----
                     CompletableFuture<List<Map<String, Object>>> sshFuture =
                             CompletableFuture.supplyAsync(LightsailRemoteAccess::listSshConnections);
-
-                    // Fan-out de gateway lookups en paralelo
+                    // Fan out gateway DB lookups in parallel
                     List<CompletableFuture<Void>> gwFutures = gateways.stream()
                             .map(gw -> dynamoDBService.getGatewaySummary(gw)
                                     .thenAccept(gwItem -> {
@@ -69,6 +59,7 @@ public class AdminController {
                     CompletableFuture<Void> gatewaysDone =
                             CompletableFuture.allOf(gwFutures.toArray(new CompletableFuture[0]));
 
+                    // ---- combinar TODO ----
                     return gatewaysDone
                             .thenCombine(sshFuture, (v, sshList) -> {
                                 userItem.put("active_tunnels", sshList);
@@ -87,19 +78,18 @@ public class AdminController {
 
         return dynamoDBService.getUserSummary(username)
                 .thenCompose(userItem -> {
-                    List<String> gateways = userItem.containsKey("gateways")
-                            ? (List<String>) userItem.get("gateways")
-                            : List.of();
+                    List<String> gateways = extractGatewayList(userItem);
 
                     JSONObject result = new JSONObject();
 
+                    // Fan out MQTT requests in parallel — no sequential blocking
                     List<CompletableFuture<Void>> mqttFutures = gateways.stream()
                             .map(gw -> {
                                 JSONObject payload = new JSONObject();
                                 payload.put("path", "GET:/summary");
                                 payload.put("command", new JSONObject());
 
-                                return mqttService.sendAsync(gw, payload)
+                                return mqttService.sendAsync( gw, payload)
                                         .thenAccept(gwStatus -> {
                                             synchronized (result) {
                                                 result.put(gw, gwStatus);
@@ -114,5 +104,20 @@ public class AdminController {
                                 return ResponseEntity.ok(JsonConverter.toMap(result.toString()));
                             });
                 });
+    }
+
+    /**
+     * Extrae la lista de gateway IDs del mapa de usuario de forma segura.
+     * JSONObject.toMap() puede devolver List<Object> en lugar de List<String>,
+     * por lo que casteamos elemento a elemento para evitar ClassCastException.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<String> extractGatewayList(Map<String, Object> userItem) {
+        Object raw = userItem.get("gateways");
+        if (!(raw instanceof List<?> list)) return List.of();
+        return list.stream()
+                .filter(o -> o instanceof String)
+                .map(o -> (String) o)
+                .toList();
     }
 }
