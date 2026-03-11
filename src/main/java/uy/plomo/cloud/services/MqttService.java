@@ -179,15 +179,11 @@ public class MqttService {
             throw new RuntimeException("Failed to subscribe to topic: " + topic, e);
         }
     }
-    private void subscribeAll() {
-        subscribe(CMD_RESPONSE_TOPIC);
-        subscribe(EVENT_TOPIC);
-        subscribe(STATUS_TOPIC);
-    }
-
     private void resubscribe() {
         try {
-            subscribeAll();
+            subscribe(CMD_RESPONSE_TOPIC);
+            subscribe(EVENT_TOPIC);
+            subscribe(STATUS_TOPIC);
         } catch (Exception e) {
             log.error("Failed to resubscribe after reconnection — topics may be missing", e);
         }
@@ -206,9 +202,9 @@ public class MqttService {
         String requestId = UUID.randomUUID().toString();
         String topic = String.format(CMD_REQUEST_PATTERN, gwId, requestId);
         CompletableFuture<String> responseFuture = pendingRequests.create(requestId);
-        publish(topic, payload.toString());
 
-        return responseFuture
+        return publish(topic, payload.toString())
+                .thenCompose(v -> responseFuture)
                 .orTimeout(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .thenApply(JsonConverter::toMap)
                 .exceptionally(ex -> {
@@ -226,19 +222,17 @@ public class MqttService {
                 });
     }
 
-    private void publish(String topic, String payload) {
+    private CompletableFuture<Void> publish(String topic, String payload) {
         log.debug("Publishing to '{}': {}", topic, payload);
         PublishPacket publishPacket = PublishPacket.of(
                 topic,
                 QOS.AT_LEAST_ONCE,
                 payload.getBytes(StandardCharsets.UTF_8));
-        try {
-            PubAckPacket pubAck = client.publish(publishPacket)
-                    .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .getResultPubAck();
-            log.debug("PubAck: {}", pubAck.getReasonCode());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to publish to topic: " + topic, e);
-        }
+        return client.publish(publishPacket)
+                .orTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .thenAccept(result -> log.debug("PubAck: {}", result.getResultPubAck().getReasonCode()))
+                .exceptionally(e -> {
+                    throw new RuntimeException("Failed to publish to topic: " + topic, e);
+                });
     }
 }

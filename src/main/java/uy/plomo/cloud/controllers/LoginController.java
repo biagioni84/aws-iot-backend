@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.DynamoDBService;
 
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
+@Tag(name = "01. Authentication", description = "Login and Token management")
 public class LoginController {
 
     public record LoginRequest(String username, String password) {}
@@ -31,7 +33,6 @@ public class LoginController {
     }
 
     @PostMapping("/auth/login")
-    @Tag(name = "01. Authentication", description = "Login and Token management")
     @Operation(summary = "Login to get JWT", description = "Enter username and password to receive a Bearer token.")
     public CompletableFuture<LoginResponse> login(@RequestBody LoginRequest req) {
         return dbService.getUserSummary(req.username())
@@ -44,7 +45,9 @@ public class LoginController {
                     }
 
                     // Extract gateway list from user record
-                    List<String> gatewayIds = extractGatewayList(userItem);
+                    List<String> gatewayIds = userItem.containsKey("gateways")
+                            ? (List<String>) userItem.get("gateways")
+                            : List.of();
 
                     String token = jwtService.generateToken(
                             req.username(),
@@ -53,15 +56,5 @@ public class LoginController {
 
                     return new LoginResponse(token, "ok");
                 });
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<String> extractGatewayList(Map<String, Object> userItem) {
-        Object raw = userItem.get("gateways");
-        if (!(raw instanceof List<?> list)) return List.of();
-        return list.stream()
-                .filter(o -> o instanceof String)
-                .map(o -> (String) o)
-                .toList();
     }
 }
