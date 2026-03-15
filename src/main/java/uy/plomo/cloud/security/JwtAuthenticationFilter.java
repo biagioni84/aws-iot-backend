@@ -54,16 +54,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         ? List.of()
                         : roles.stream().map(SimpleGrantedAuthority::new).toList();
 
-                // Build authentication WITHOUT calling the database
-                // Gateway list is stored as a claim attribute — see GatewayOwnershipFilter
                 UsernamePasswordAuthenticationToken authToken =
                         new UsernamePasswordAuthenticationToken(username, null, authorities);
-                authToken.setDetails(claims); // pass claims downstream — avoids re-parsing
+                authToken.setDetails(claims);
                 SecurityContextHolder.getContext().setAuthentication(authToken);
             }
         } catch (JwtException e) {
-            // Expired, malformed or tampered token — do NOT set authentication.
-            // Spring Security will return 401 via ExceptionTranslationFilter.
             log.debug("Invalid JWT token: {}", e.getMessage());
         }
 

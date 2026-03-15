@@ -27,14 +27,12 @@ import uy.plomo.cloud.utils.JsonConverter;
 @Slf4j
 public class MqttService {
 
-    // Topic constants — change the namespace here and it propagates everywhere
     private static final String TOPIC_NAMESPACE = "iot/v1";
     private static final String CMD_REQUEST_PATTERN  = TOPIC_NAMESPACE + "/%s/request/%s";
     private static final String CMD_RESPONSE_TOPIC   = TOPIC_NAMESPACE + "/+/response/+";
     private static final String EVENT_TOPIC          = TOPIC_NAMESPACE + "/+/event/#";
     private static final String STATUS_TOPIC         = TOPIC_NAMESPACE + "/+/status";
 
-    // Regex to extract gwId and requestId from a response topic
     private static final Pattern RESPONSE_PATTERN =
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/response/(.*)");
 
@@ -54,9 +52,7 @@ public class MqttService {
     private Mqtt5Client client;
     private final PendingRequestsService pendingRequests;
 
-    // Tracks whether we've successfully connected at least once
     private final AtomicBoolean everConnected = new AtomicBoolean(false);
-    // Tracks whether we're currently connected
     private final AtomicBoolean connected = new AtomicBoolean(false);
 
     public MqttService(PendingRequestsService pendingRequests) {
@@ -138,12 +134,10 @@ public class MqttService {
                 log.debug("Completing pending request: {}", requestId);
                 pendingRequests.complete(requestId, payload);
             } else {
-                // Events and status updates — extend here as needed
                 log.debug("Unhandled topic: {}", topic);
             }
         };
         AwsIotMqtt5ClientBuilder builder = AwsIotMqtt5ClientBuilder.newWebsocketMqttBuilderWithSigv4Auth(endpoint, null);
-        // Configure exponential backoff reconnection
         builder.withMinReconnectDelayMs(RECONNECT_MIN_MS);
         builder.withMaxReconnectDelayMs(RECONNECT_MAX_MS);
         builder.withLifeCycleEvents(lifecycleEvents);
@@ -163,7 +157,6 @@ public class MqttService {
             throw new RuntimeException("Interrupted while waiting for MQTT connection", e);
         }
 
-        // Subscribe only to response, event, and status topics — not the wildcard #
         subscribe(CMD_RESPONSE_TOPIC);
         subscribe(EVENT_TOPIC);
         subscribe(STATUS_TOPIC);
@@ -211,8 +204,7 @@ public class MqttService {
                     pendingRequests.cancel(requestId); // clean up if still pending
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     log.warn("Request {} to gateway {} failed: {}", requestId, gwId, cause.getMessage());
-                    // Return a failed future so GlobalExceptionHandler converts it to the right HTTP status:
-                    // TimeoutException → 504, everything else → 503
+
                     if (cause instanceof java.util.concurrent.TimeoutException) {
                         throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT,
                                 "No response from gateway within " + RESPONSE_TIMEOUT_SECONDS + "s");

@@ -3,6 +3,7 @@ package uy.plomo.cloud;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -13,7 +14,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import uy.plomo.cloud.security.JwtService;
-import uy.plomo.cloud.services.DynamoDBService;
+import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
 
@@ -25,6 +26,7 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
+@Import(PostgresTestConfig.class)
 @TestPropertySource(properties = {
         "jwt.secret=test-secret-key-that-is-long-enough-for-hmac",
         "jwt.expiration-ms=86400000",
@@ -35,12 +37,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
         "tunnel.server.host=test-server",
         "port.pool.start=9000",
         "port.pool.end=9010",
-        "iot.instanceName=test-instance"
+        "iot.instanceName=test-instance",
+        "spring.flyway.enabled=false",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 public abstract class BaseControllerTest {
 
+    @MockitoBean protected GatewayService gatewayService;
     @MockitoBean protected MqttService mqttService;
-    @MockitoBean protected DynamoDBService dynamoDBService;
     @MockitoBean protected PortPoolService portPoolService;
 
     @Autowired private WebApplicationContext context;
@@ -59,16 +63,11 @@ public abstract class BaseControllerTest {
     /**
      * Para controllers que devuelven CompletableFuture, Spring MVC procesa la
      * respuesta de forma asíncrona. MockMvc necesita dos pasos:
-     *   1. perform()        → inicia el request, Spring arranca el async processing
-     *   2. asyncDispatch()  → espera que el CompletableFuture se resuelva y escribe
-     *                         el status/body/headers reales en el response
+     *   1. perform()       → inicia el request
+     *   2. asyncDispatch() → espera que el CompletableFuture se resuelva
      *
-     * Sin el segundo paso, MockMvc devuelve un response vacío con status incorrecto
-     * antes de que el controller haya terminado.
-     *
-     * Usar perform() de la base para todos los controllers async.
      * Para respuestas síncronas del filter chain (403, 404 del ownership filter),
-     * usar mockMvc.perform() directamente desde el test.
+     * usar mockMvc.perform() directamente.
      */
     protected ResultActions perform(MockHttpServletRequestBuilder request) throws Exception {
         MvcResult mvcResult = mockMvc.perform(request).andReturn();
@@ -78,12 +77,11 @@ public abstract class BaseControllerTest {
     protected String bearerToken(String username, List<String> gatewayIds) {
         return "Bearer " + jwtService.generateToken(
                 username,
-                List.of(new SimpleGrantedAuthority("ROLE_USER")),
-                gatewayIds
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))
         );
     }
 
-    /** HashMap mutable -- necesario para mocks de AdminController que muta el mapa devuelto. */
+    /** HashMap mutable — necesario para AdminController que muta el map devuelto */
     protected static Map<String, Object> mutableMap(Object... keysAndValues) {
         Map<String, Object> map = new HashMap<>();
         for (int i = 0; i < keysAndValues.length; i += 2) {

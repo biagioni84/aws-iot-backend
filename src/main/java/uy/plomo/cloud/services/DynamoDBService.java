@@ -59,9 +59,6 @@ public class DynamoDBService {
             if (useThisServer == null)                  useThisServer = "off";
         }
     }
-    // -------------------------------------------------------------------------
-    // Users
-    // -------------------------------------------------------------------------
 
     public CompletableFuture<Map<String, Object>> getUserSummary(String username) {
         QueryRequest request = QueryRequest.builder()
@@ -82,10 +79,6 @@ public class DynamoDBService {
         });
     }
 
-    // -------------------------------------------------------------------------
-    // Gateways
-    // -------------------------------------------------------------------------
-
     public CompletableFuture<Map<String, Object>> getGatewaySummary(String gwId) {
         return queryGateway(gwId).thenApply(response -> {
             if (response.items().isEmpty()) {
@@ -95,10 +88,6 @@ public class DynamoDBService {
                     EnhancedDocument.fromAttributeValueMap(response.items().get(0)).toJson()).toMap();
         });
     }
-
-    // -------------------------------------------------------------------------
-    // Tunnels
-    // -------------------------------------------------------------------------
 
     public CompletableFuture<Map<String, Object>> getTunnelList(String gwId) {
         return queryGateway(gwId).thenApply(response -> {
@@ -125,10 +114,6 @@ public class DynamoDBService {
                     EnhancedDocument.fromAttributeValueMap(tunnels.m().get(tunnelId).m()).toJson()).toMap();
         });
     }
-
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
 
     private CompletableFuture<QueryResponse> queryGateway(String gwId) {
         QueryRequest request = QueryRequest.builder()
@@ -222,10 +207,6 @@ public class DynamoDBService {
                 "use_this_server", AttributeValue.builder().s(tunnel.useThisServer()).build()
         )).build();
     }
-
-    // -------------------------------------------------------------------------
-    // Exceptions
-    // -------------------------------------------------------------------------
 
     public static class ResourceNotFoundException extends RuntimeException {
         public ResourceNotFoundException(String message) { super(message); }

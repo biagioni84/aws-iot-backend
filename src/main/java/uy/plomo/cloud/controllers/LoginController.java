@@ -9,12 +9,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import uy.plomo.cloud.entity.Gateway;
 import uy.plomo.cloud.security.JwtService;
-import uy.plomo.cloud.services.DynamoDBService;
+import uy.plomo.cloud.services.GatewayService;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -25,36 +24,33 @@ public class LoginController {
     public record LoginResponse(String token, String status) {}
 
     private final JwtService jwtService;
-    private final DynamoDBService dbService;
+    private final GatewayService gatewayService;
 
-    public LoginController(JwtService jwtService, DynamoDBService dbService) {
+    public LoginController(JwtService jwtService, GatewayService gatewayService) {
         this.jwtService = jwtService;
-        this.dbService = dbService;
+        this.gatewayService = gatewayService;
     }
 
     @PostMapping("/auth/login")
     @Operation(summary = "Login to get JWT", description = "Enter username and password to receive a Bearer token.")
     public CompletableFuture<LoginResponse> login(@RequestBody LoginRequest req) {
-        return dbService.getUserSummary(req.username())
-                .thenApply(userItem -> {
-                    // Verify password
-                    String pwdHash = userItem
-                            .getOrDefault("password", "").toString();
-                    if (pwdHash.isEmpty() || !BCrypt.checkpw(req.password(), pwdHash)) {
-                        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
-                    }
+        return CompletableFuture.supplyAsync(() -> {
+            var user = gatewayService.getUserWithGateways(req.username());
 
-                    // Extract gateway list from user record
-                    List<String> gatewayIds = userItem.containsKey("gateways")
-                            ? (List<String>) userItem.get("gateways")
-                            : List.of();
+            if (!BCrypt.checkpw(req.password(), user.getPasswordHash())) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
+            }
 
-                    String token = jwtService.generateToken(
-                            req.username(),
-                            List.of(new SimpleGrantedAuthority("ROLE_USER")),
-                            gatewayIds);
+            List<String> gatewayIds = user.getGateways().stream()
+                    .map(Gateway::getId)
+                    .toList();
 
-                    return new LoginResponse(token, "ok");
-                });
+            String token = jwtService.generateToken(
+                    req.username(),
+                    List.of(new SimpleGrantedAuthority("ROLE_USER"))
+            );
+
+            return new LoginResponse(token, "ok");
+        });
     }
 }

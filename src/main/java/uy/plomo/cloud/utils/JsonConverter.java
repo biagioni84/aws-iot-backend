@@ -17,7 +17,6 @@ public class JsonConverter {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    // Private constructor - esta clase no debe instanciarse
     private JsonConverter() {
         throw new UnsupportedOperationException("Utility class");
     }

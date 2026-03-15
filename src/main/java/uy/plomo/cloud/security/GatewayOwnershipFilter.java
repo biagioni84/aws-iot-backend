@@ -9,10 +9,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-import io.jsonwebtoken.Claims;
+import uy.plomo.cloud.repository.UserRepository;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,8 +21,8 @@ import java.util.regex.Pattern;
  * user owns the requested gateway. Returns 404 on mismatch to avoid
  * revealing whether the gateway exists.
  *
- * Reads gateway ownership from the Claims stored in the Authentication details
- * by JwtAuthenticationFilter — no second JWT parse needed.
+ * Ownership is verified against the database — not the JWT — so that
+ * gateways added after login are immediately accessible.
  */
 @Component
 @Slf4j
@@ -32,13 +31,12 @@ public class GatewayOwnershipFilter extends OncePerRequestFilter {
     private static final Pattern GW_PATH_PATTERN =
             Pattern.compile("^/api/v1/([^/]+)/.*$");
 
-    // Non-gateway segments that appear at /api/v1/{segment}/ — add here if new routes are added
     private static final Set<String> NON_GATEWAY_SEGMENTS = Set.of("summary", "gateways");
 
-    private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public GatewayOwnershipFilter(JwtService jwtService) {
-        this.jwtService = jwtService;
+    public GatewayOwnershipFilter(UserRepository userRepository) {
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -62,33 +60,25 @@ public class GatewayOwnershipFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Use the Authentication already set by JwtAuthenticationFilter.
-        // If it's null, the user is unauthenticated — let Spring Security handle it.
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // JwtAuthenticationFilter stores the full Claims in auth.getDetails()
-        // to avoid parsing the JWT a second time here.
-        List<String> ownedGateways = extractGatewaysFromAuth(auth);
+        String username = auth.getName();
 
-        if (!ownedGateways.contains(gwId)) {
-            log.warn("User '{}' attempted to access unowned gateway '{}'", auth.getName(), gwId);
+        boolean owns = userRepository.findByUsernameWithGateways(username)
+                .map(user -> user.getGateways().stream()
+                        .anyMatch(gw -> gw.getId().equals(gwId)))
+                .orElse(false);
+
+        if (!owns) {
+            log.warn("User '{}' attempted to access unowned gateway '{}'", username, gwId);
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<String> extractGatewaysFromAuth(Authentication auth) {
-        if (auth.getDetails() instanceof Claims claims) {
-            return jwtService.extractGateways(claims);
-        }
-        // Fallback: should not happen in normal flow, but safe to handle
-        return List.of();
     }
 }

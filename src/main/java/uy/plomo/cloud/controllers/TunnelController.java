@@ -8,17 +8,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import software.amazon.awssdk.enhanced.dynamodb.document.EnhancedDocument;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import uy.plomo.cloud.services.DynamoDBService;
+import uy.plomo.cloud.dto.TunnelRequest;
+import uy.plomo.cloud.platform.LightsailRemoteAccess;
+import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
-import uy.plomo.cloud.services.DynamoDBService.TunnelRequest;
 
 import java.net.URI;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -27,38 +24,109 @@ import java.util.concurrent.CompletableFuture;
 @PreAuthorize("hasRole('USER')")
 @Slf4j
 public class TunnelController {
+
     @Value("${tunnel.server.host}")
     private String serverHost;
 
-    private final DynamoDBService dynamoDBService;
+    private final GatewayService gatewayService;
     private final MqttService mqttService;
     private final PortPoolService portPoolService;
+    private final LightsailRemoteAccess lightsailRemoteAccess;
 
-    public TunnelController(DynamoDBService dynamoDBService,
+    public TunnelController(GatewayService gatewayService,
                             MqttService mqttService,
-                            PortPoolService portPoolService) {
-        this.dynamoDBService = dynamoDBService;
+                            PortPoolService portPoolService,
+                            LightsailRemoteAccess lightsailRemoteAccess) {
+        this.gatewayService = gatewayService;
         this.mqttService = mqttService;
         this.portPoolService = portPoolService;
+        this.lightsailRemoteAccess = lightsailRemoteAccess;
     }
-
 
     @GetMapping("/{gwId}/tunnels")
     public CompletableFuture<ResponseEntity<Map<String, Object>>> tunnelList(
             @Parameter(ref = "#/components/parameters/gwParam") @PathVariable String gwId) {
 
-        return dynamoDBService.getTunnelList(gwId)
+        return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelList(gwId))
                 .thenApply(ResponseEntity::ok);
     }
-
 
     @GetMapping("/{gwId}/tunnels/{tunnelId}")
     public CompletableFuture<ResponseEntity<Map<String, Object>>> tunnelDetail(
             @PathVariable String gwId,
             @PathVariable String tunnelId) {
-        return dynamoDBService.getTunnelDetail(gwId, tunnelId)
+
+        return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
                 .thenApply(ResponseEntity::ok);
     }
+
+    @PostMapping("/{gwId}/tunnels")
+    public CompletableFuture<ResponseEntity<Map<String, String>>> newTunnel(
+            @PathVariable String gwId,
+            @RequestBody TunnelRequest body) {
+
+        return CompletableFuture.supplyAsync(() -> gatewayService.createTunnel(gwId, body))
+                .thenApply(tunnelId -> {
+                    log.info("Created tunnel {} on gateway {}", tunnelId, gwId);
+                    return ResponseEntity
+                            .created(URI.create("/api/v1/" + gwId + "/tunnels/" + tunnelId))
+                            .body(Map.of("tunnelId", tunnelId));
+                });
+    }
+
+    @PutMapping("/{gwId}/tunnels/{tunnelId}")
+    public CompletableFuture<ResponseEntity<Void>> updateTunnel(
+            @PathVariable String gwId,
+            @PathVariable String tunnelId,
+            @RequestBody TunnelRequest body) {
+
+        return CompletableFuture.runAsync(() -> {
+            log.info("Updating tunnel {} on gateway {}", tunnelId, gwId);
+            gatewayService.updateTunnel(gwId, tunnelId, body);
+        }).thenApply(v -> ResponseEntity.<Void>noContent().build());
+    }
+
+    @DeleteMapping("/{gwId}/tunnels/{tunnelId}")
+    public CompletableFuture<ResponseEntity<Void>> deleteTunnel(
+            @PathVariable String gwId,
+            @PathVariable String tunnelId) {
+
+        log.info("Deleting tunnel {} on gateway {}", tunnelId, gwId);
+
+        return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
+                .thenCompose(tunnel -> {
+                    // Enviamos stop al gateway — ignoramos errores (puede estar offline)
+                    JSONObject command = new JSONObject();
+                    command.put("cmd", "stop");
+                    command.put("src-addr", tunnel.get("src_addr"));
+                    command.put("src-port", tunnel.get("src_port"));
+
+                    if ("on".equals(tunnel.get("use_this_server"))) {
+                        command.put("dst-addr", portPoolService.getServerHost());
+                        command.put("dst-port", tunnel.get("dst_port"));
+                    }
+
+                    JSONObject payload = new JSONObject();
+                    payload.put("path", "POST:/tunnel");
+                    payload.put("command", command);
+
+                    return mqttService.sendAsync(gwId, payload)
+                            .handle((resp, ex) -> {
+                                if ("on".equals(tunnel.get("use_this_server"))) {
+                                    portPoolService.releasePort((String) tunnel.get("dst_port"));
+                                }
+                                if (ex != null) {
+                                    log.warn("Stop command failed for tunnel {}, proceeding with delete: {}",
+                                            tunnelId, ex.getMessage());
+                                }
+                                return tunnel;
+                            });
+                })
+                .thenCompose(tunnel -> CompletableFuture.runAsync(() ->
+                        gatewayService.deleteTunnel(gwId, tunnelId)))
+                .thenApply(v -> ResponseEntity.<Void>noContent().build());
+    }
+
 
     @PostMapping("/{gwId}/tunnels/{tunnelId}/start")
     public CompletableFuture<ResponseEntity<Map<String, Object>>> tunnelStart(
@@ -67,38 +135,44 @@ public class TunnelController {
 
         log.info("Starting tunnel {} on gateway {}", tunnelId, gwId);
 
-        // Step 1: fetch gateway summary (to get its pubkey)
         JSONObject summaryPayload = new JSONObject();
         summaryPayload.put("path", "GET:/summary");
         summaryPayload.put("command", new JSONObject());
 
         return mqttService.sendAsync(gwId, summaryPayload)
-                .thenCompose(gwSummary -> {
-                    // Step 2: fetch tunnel config from DynamoDB
-                    return dynamoDBService.getTunnelDetail(gwId, tunnelId)
-                            .thenCompose(tunnel -> {
-                                // Step 3: build and send the start command
-                                JSONObject command = new JSONObject();
-                                command.put("cmd", "start");
-                                command.put("src-addr", tunnel.get("src_addr"));
-                                command.put("src-port", tunnel.get("src_port"));
+                .thenCompose(gwSummary ->
+                        CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
+                                .thenCompose(tunnel -> {
+                                    JSONObject command = new JSONObject();
+                                    command.put("cmd", "start");
+                                    command.put("src-addr", tunnel.get("src_addr"));
+                                    command.put("src-port", tunnel.get("src_port"));
 
-                                if ("on".equals(tunnel.get("use_this_server"))) {
-                                    String dstPort = portPoolService.assignPort(
-                                            (String) tunnel.get("dst_port"),
-                                            "iot-" + gwId,
-                                            gwSummary.get("pubkey").toString());
-                                    command.put("dst-addr", serverHost);
-                                    command.put("dst-port", dstPort);
-                                }
+                                    final String assignedPort;
+                                    if ("on".equals(tunnel.get("use_this_server"))) {
+                                        assignedPort = portPoolService.assignPort(
+                                                (String) tunnel.get("dst_port"),
+                                                "iot-" + gwId,
+                                                gwSummary.get("pubkey").toString());
+                                        command.put("dst-addr", serverHost);
+                                        command.put("dst-port", assignedPort);
+                                    } else {
+                                        assignedPort = null;
+                                    }
 
-                                JSONObject payload = new JSONObject();
-                                payload.put("path", "POST:/tunnel");
-                                payload.put("command", command);
+                                    JSONObject payload = new JSONObject();
+                                    payload.put("path", "POST:/tunnel");
+                                    payload.put("command", command);
 
-                                return mqttService.sendAsync(gwId, payload);
-                            });
-                })
+                                    return mqttService.sendAsync(gwId, payload)
+                                            .thenApply(response -> {
+                                                if (assignedPort != null) {
+                                                    gatewayService.markTunnelActive(
+                                                            gwId, tunnelId, Integer.parseInt(assignedPort));
+                                                }
+                                                return response;
+                                            });
+                                }))
                 .thenApply(ResponseEntity::ok);
     }
 
@@ -109,7 +183,7 @@ public class TunnelController {
 
         log.info("Stopping tunnel {} on gateway {}", tunnelId, gwId);
 
-        return dynamoDBService.getTunnelDetail(gwId, tunnelId)
+        return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
                 .thenCompose(tunnel -> {
                     JSONObject command = new JSONObject();
                     command.put("cmd", "stop");
@@ -127,92 +201,23 @@ public class TunnelController {
 
                     return mqttService.sendAsync(gwId, payload)
                             .thenApply(response -> {
-                                portPoolService.releasePort((String) tunnel.get("dst_port"));
+                                if ("on".equals(tunnel.get("use_this_server"))) {
+                                    String dstPort = (String) tunnel.get("dst_port");
+                                    portPoolService.releasePort(dstPort);
+
+                                    LightsailRemoteAccess.ShellResult kill =
+                                            lightsailRemoteAccess.killSshTunnelByPort(dstPort);
+                                    if (kill.exit() != 0) {
+                                        log.warn("killSshTunnelByPort({}) exited {}: {}",
+                                                dstPort, kill.exit(), kill.out());
+                                    } else {
+                                        log.info("SSH tunnel on port {} killed", dstPort);
+                                    }
+                                }
+                                gatewayService.markTunnelStopped(gwId, tunnelId);
                                 return response;
                             });
                 })
                 .thenApply(ResponseEntity::ok);
     }
-
-
-    /**
-     * Creates a new tunnel with a backend-generated UUID.
-     * Returns 201 Created with a Location header pointing to the new resource.
-     */
-    @PostMapping("/{gwId}/tunnels")
-    public CompletableFuture<ResponseEntity<Map<String, String>>> newTunnel(
-            @PathVariable String gwId,
-            @RequestBody TunnelRequest body) {
-
-        String tunnelId = UUID.randomUUID().toString();
-        log.info("Creating tunnel {} on gateway {}", tunnelId, gwId);
-
-        return dynamoDBService.createTunnel(gwId, tunnelId, body)
-                .thenApply(v -> ResponseEntity
-                        .created(URI.create("/api/v1/gateways/" + gwId + "/tunnels/" + tunnelId))
-                        .body(Map.of("tunnelId", tunnelId)));
-    }
-
-    /**
-     * Replaces all editable fields of an existing tunnel.
-     * The tunnel must not be running — stop it first if needed.
-     */
-    @PutMapping("/{gwId}/tunnels/{tunnelId}")
-    public CompletableFuture<ResponseEntity<Void>> updateTunnel(
-            @PathVariable String gwId,
-            @PathVariable String tunnelId,
-            @RequestBody TunnelRequest body) {
-
-        log.info("Updating tunnel {} on gateway {}", tunnelId, gwId);
-
-        return dynamoDBService.updateTunnel(gwId, tunnelId, body)
-                .thenApply(v -> ResponseEntity.<Void>noContent().build());
-    }
-
-    /**
-     * Stops the tunnel if active, then removes it from DynamoDB.
-     */
-    @DeleteMapping("/{gwId}/tunnels/{tunnelId}")
-    public CompletableFuture<ResponseEntity<Void>> deleteTunnel(
-            @PathVariable String gwId,
-            @PathVariable String tunnelId) {
-
-        log.info("Deleting tunnel {} on gateway {}", tunnelId, gwId);
-
-        // Fetch tunnel first to build the stop command and check use_this_server
-        return dynamoDBService.getTunnelDetail(gwId, tunnelId)
-                .thenCompose(tunnel -> {
-                    // Send stop command to gateway — ignore errors (tunnel may already be stopped)
-                    JSONObject command = new JSONObject();
-                    command.put("cmd", "stop");
-                    command.put("src-addr", tunnel.get("src_addr"));
-                    command.put("src-port", tunnel.get("src_port"));
-
-                    if ("on".equals(tunnel.get("use_this_server"))) {
-                        command.put("dst-addr", portPoolService.getServerHost());
-                        command.put("dst-port", tunnel.get("dst_port"));
-                    }
-
-                    JSONObject payload = new JSONObject();
-                    payload.put("path", "POST:/tunnel");
-                    payload.put("command", command);
-
-                    return mqttService.sendAsync(gwId, payload)
-                            .handle((resp, ex) -> {
-                                // Release port regardless of MQTT result
-                                if ("on".equals(tunnel.get("use_this_server"))) {
-                                    portPoolService.releasePort((String) tunnel.get("dst_port"));
-                                }
-                                if (ex != null) {
-                                    log.warn("Stop command failed for tunnel {}, proceeding with delete: {}",
-                                            tunnelId, ex.getMessage());
-                                }
-                                return tunnel;
-                            });
-                })
-                .thenCompose(tunnel -> dynamoDBService.deleteTunnel(gwId, tunnelId))
-                .thenApply(v -> ResponseEntity.<Void>noContent().build());
-    }
-
-
 }

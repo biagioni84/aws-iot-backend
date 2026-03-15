@@ -68,11 +68,4 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // FIX: eliminados SecurityContextHolderStrategy bean y ApplicationRunner.
-    // Ambos causaban un split-brain: SecurityContextHolderFilter usaba el bean
-    // (ThreadLocal capturado en tiempo de creación) mientras JwtAuthenticationFilter
-    // usaba SecurityContextHolder.getContext() con la estrategia cambiada por el
-    // ApplicationRunner (InheritableThreadLocal), resultando en dos contextos distintos.
-    // @AuthenticationPrincipal se resuelve sincrónicamente antes del async, por lo
-    // que MODE_INHERITABLETHREADLOCAL no aporta nada útil aquí.
 }

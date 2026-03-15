@@ -2,11 +2,13 @@ package uy.plomo.cloud;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import uy.plomo.cloud.services.MqttService;
 
 @SpringBootTest
+@Import(PostgresTestConfig.class)
 @TestPropertySource(properties = {
         "jwt.secret=test-secret-key-that-is-long-enough-for-hmac",
         "jwt.expiration-ms=86400000",
@@ -17,7 +19,9 @@ import uy.plomo.cloud.services.MqttService;
         "tunnel.server.host=test-server",
         "port.pool.start=9000",
         "port.pool.end=9010",
-        "iot.instanceName=test-instance"
+        "iot.instanceName=test-instance",
+        "spring.flyway.enabled=false",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 class CloudApplicationTests {
 

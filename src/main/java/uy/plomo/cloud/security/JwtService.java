@@ -29,15 +29,14 @@ public class JwtService {
     private long expirationMs;
 
     public String generateToken(String username,
-                                Collection<? extends GrantedAuthority> authorities,
-                                List<String> gatewayIds) {
+                                Collection<? extends GrantedAuthority> authorities) {
         List<String> roles = authorities.stream()
                 .map(GrantedAuthority::getAuthority)
                 .toList();
         return Jwts.builder()
                 .setSubject(username)
                 .claim("roles", roles)
-                .claim("gateways", gatewayIds)   // embed gateway ownership
+//                .claim("gateways", gatewayIds)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(key)
@@ -61,7 +60,8 @@ public class JwtService {
                 .parseClaimsJws(token)
                 .getBody();
     }
-    @SuppressWarnings("unchecked")
+
+
     public List<String> extractGateways(Claims claims) {
         Object gateways = claims.get("gateways");
         if (gateways instanceof List<?> list) {

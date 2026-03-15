@@ -7,8 +7,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 import uy.plomo.cloud.services.DynamoDBService;
+import uy.plomo.cloud.services.GatewayService;
 
-import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
 
 @RestControllerAdvice
@@ -16,6 +17,19 @@ import java.util.concurrent.TimeoutException;
 public class GlobalExceptionHandler {
 
     public record ErrorResponse(String error, String message) {}
+
+    @ExceptionHandler(GatewayService.ResourceNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleGwNotFound(GatewayService.ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("NOT_FOUND", ex.getMessage()));
+    }
+
+    @ExceptionHandler(GatewayService.ConflictException.class)
+    public ResponseEntity<ErrorResponse> handleGwConflict(GatewayService.ConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("CONFLICT", ex.getMessage()));
+    }
+
 
     @ExceptionHandler(DynamoDBService.ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(DynamoDBService.ResourceNotFoundException ex) {
@@ -27,6 +41,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleConflict(DynamoDBService.ConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse("CONFLICT", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CompletionException.class)
+    public ResponseEntity<ErrorResponse> handleCompletion(CompletionException ex) {
+        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+        if (cause instanceof GatewayService.ResourceNotFoundException r) return handleGwNotFound(r);
+        if (cause instanceof GatewayService.ConflictException c)          return handleGwConflict(c);
+        if (cause instanceof DynamoDBService.ResourceNotFoundException r)  return handleNotFound(r);
+        if (cause instanceof DynamoDBService.ConflictException c)          return handleConflict(c);
+        if (cause instanceof ResponseStatusException r)                    return handleResponseStatus(r);
+        log.error("Unhandled CompletionException", ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponse("INTERNAL_ERROR", "An unexpected error occurred"));
     }
 
     @ExceptionHandler(TimeoutException.class)

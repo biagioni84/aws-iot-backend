@@ -44,10 +44,6 @@ public class LightsailRemoteAccess {
         return "/home/" + tunnelUser + "/.ssh/authorized_keys";
     }
 
-    // =========================================================================
-    // authorized_keys management
-    // =========================================================================
-
     /**
      * Agrega o actualiza la línea de authorized_keys para el gateway dado.
      * Si ya existe una línea con esa pubkey, actualiza su puerto.
@@ -115,10 +111,6 @@ public class LightsailRemoteAccess {
         writeFile(authKeysPath(), content);
     }
 
-    // =========================================================================
-    // Firewall management (Lightsail)
-    // =========================================================================
-
     public ShellResult addInboundRule(String port) {
         log.info("Opening Lightsail port {}", port);
         return exec("aws", "lightsail", "open-instance-public-ports",
@@ -135,9 +127,6 @@ public class LightsailRemoteAccess {
                         port, port, EXTERNAL_CIDR));
     }
 
-    // =========================================================================
-    // SSH connection monitoring
-    // =========================================================================
 
     /**
      * Parsea `sudo lsof -P -i -n` y devuelve todas las conexiones sshd
@@ -193,6 +182,24 @@ public class LightsailRemoteAccess {
                 .collect(Collectors.toList());
     }
 
+    /** Mata el proceso SSH que está escuchando en el puerto dado. */
+    public ShellResult killSshTunnelByPort(String port) {
+        List<Map<String, Object>> connections = listSshConnections();
+        Optional<Map<String, Object>> match = connections.stream()
+                .filter(c -> port.equals(c.get("port")))
+                .findFirst();
+
+        if (match.isEmpty()) {
+            log.warn("No SSH tunnel found listening on port {}", port);
+            return new ShellResult(-1, "", "no tunnel found on port " + port);
+        }
+
+        String pid = (String) match.get().get("pid");
+        String user = (String) match.get().get("user");
+        ShellResult result = exec("sudo", "kill", "-9", pid);
+        log.info("Killed SSH tunnel on port {} (user={}, pid={})", port, user, pid);
+        return result;
+    }
     /** Mata el proceso SSH del usuario por PID. */
     public ShellResult killSshTunnel(String user) {
         List<Map<String, Object>> tunnelData = getTunnelData(user);
@@ -222,10 +229,6 @@ public class LightsailRemoteAccess {
         if (open) return false;
         return (System.currentTimeMillis() / 1000 - lastOpen) > 120;
     }
-
-    // =========================================================================
-    // Core execution — sin shell injection
-    // =========================================================================
 
     /**
      * Ejecuta un comando con argumentos separados via ProcessBuilder.

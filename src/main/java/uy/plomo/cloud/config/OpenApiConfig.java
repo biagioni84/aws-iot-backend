@@ -31,7 +31,6 @@ public class OpenApiConfig {
                         .license(new License()
                                 .name("Apache 2.0")
                                 .url("https://springdoc.org")))
-                // JWT Security scheme
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME_NAME))
                 .components(new Components()
                         .addParameters("gwParam", new PathParameter()

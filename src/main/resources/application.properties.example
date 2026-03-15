@@ -1,15 +1,36 @@
 spring.application.name=cloud
-jwt.secret= someverylongsecretkeyforjwt1234567890
-aws.iot.endpoint = somendpoint-ats.iot.us-east-1.amazonaws.com
-aws.iot.clientId = iot-client
+jwt.secret=someverylongsecretkeyforjwt1234567890
+aws.iot.endpoint=someendpoint-ats.iot.us-east-1.amazonaws.com
+aws.iot.clientId=iot-client
 logging.level.root=INFO
 logging.level.uy.plomo.cloud=DEBUG
 springdoc.swagger-ui.persistAuthorization=true
 springdoc.swagger-ui.tagsSorter=alpha
-#springdoc.default-consumes-media-type=application/json
-#springdoc.default-produces-media-type=application/json
 port.pool.start=9000
 port.pool.end=9999
 iot.instanceName=instance_name
 logging.level.org.springframework.security=DEBUG
 tunnel.server.host=<server_ip>
+aws.region=us-east-1
+
+# --- PostgreSQL ---
+spring.datasource.url=jdbc:postgresql://localhost:5432/iot_backend
+spring.datasource.username=app
+spring.datasource.password=secret
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# HikariCP connection pool
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=2
+spring.datasource.hikari.connection-timeout=30000
+
+# --- JPA / Hibernate ---
+# validate: Flyway es el dueño del schema, Hibernate solo valida que coincida
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.open-in-view=false
+
+# --- Flyway ---
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration

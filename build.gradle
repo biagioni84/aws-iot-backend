@@ -18,16 +18,26 @@ repositories {
     mavenCentral()
 }
 
-// FIX: Dependencies MUST be defined before they are "observed" by the jar task
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-h2console'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-security'
 
-    runtimeOnly 'com.h2database:h2'
+    // PostgreSQL driver (production)
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Flyway core + PostgreSQL dialect
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
+
+    // Testcontainers 2.x — los módulos ahora se llaman testcontainers-*
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter:2.0.2'
+    testImplementation 'org.testcontainers:testcontainers-postgresql:2.0.2'
+
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
@@ -46,15 +56,12 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
 }
 
-// Now we can configure the jar because the dependencies are fully defined
 jar {
     enabled = true
     archiveClassifier = 'lean'
-
     manifest {
         attributes(
                 'Main-Class': 'uy.plomo.cloud.CloudApplication',
-                // We use a closure here to ensure this is calculated only when needed
                 'Class-Path': configurations.runtimeClasspath.files.collect { "lib/" + it.name }.join(' ')
         )
     }
@@ -82,9 +89,7 @@ tasks.named('test') {
 tasks.register('updateApp', Copy) {
     description = 'Only updates the lean JAR in the dist folder'
     group = 'distribution'
-
-    dependsOn jar // Only recompiles your code, doesn't touch dependencies
-
+    dependsOn jar
     into "${layout.buildDirectory.get()}/dist"
     from("${layout.buildDirectory.get()}/libs") {
         include "*-lean.jar"
