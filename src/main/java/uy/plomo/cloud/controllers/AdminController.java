@@ -48,8 +48,8 @@ public class AdminController {
 
                     userItem.put("gateways", new HashMap<String, Object>());
 
-                    CompletableFuture<List<Map<String, Object>>> sshFuture
-                            CompletableFuture.supplyAsync(lightsailRemoteAccess::listSshConnections);
+                    CompletableFuture<List<Map<String, Object>>> sshFuture =
+                    CompletableFuture.supplyAsync(lightsailRemoteAccess::listSshConnections);
 
                     List<CompletableFuture<Void>> gwFutures = gateways.stream()
                             .map(gw -> CompletableFuture.supplyAsync(() -> gatewayService.getGatewaySummary(gw))
