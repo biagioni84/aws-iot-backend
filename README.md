@@ -15,6 +15,8 @@ Spring Boot 4 backend for a multi-tenant IIoT gateway platform. Manages gateway 
 | Security | Spring Security + JWT (JJWT) |
 | Messaging | AWS IoT Core MQTT5 (AWS IoT Device SDK) |
 | Telemetry storage | AWS DynamoDB (async SDK v2) |
+| Cold storage | AWS S3 (Parquet via Apache Parquet + Avro) |
+| Analytics | AWS Athena (async SDK v2) |
 | Connection pool | HikariCP |
 | Build | Gradle |
 
@@ -31,18 +33,22 @@ Spring Boot Backend
     ├── GatewayOwnershipFilter    — enforces per-request gateway ownership (DB lookup)
     ├── AdminController           — user summary, gateway list
     ├── TunnelController          — tunnel CRUD + start/stop
-    ├── TelemetryController       — query historical sensor data
+    ├── TelemetryController       — unified hot+cold telemetry query
     └── LoginController           — authentication
          │
          ├── GatewayService       — synchronous JPA service
          ├── MqttService          — MQTT5 pub/sub, request/response + telemetry ingest
-         ├── TelemetryService     — DynamoDB persistence for sensor data
+         ├── TelemetryService     — DynamoDB hot storage (last 48 h)
+         ├── ArchiveService       — daily Parquet archival to S3 (scheduled)
+         ├── AthenaService        — cold query via Athena (>48 h)
          ├── PortPoolService      — SSH port assignment
          └── LightsailRemoteAccess — authorized_keys + Lightsail firewall management
               │
               ├── PostgreSQL (via Docker)
               ├── AWS IoT Core (MQTT)
-              └── AWS DynamoDB (iot-telemetry table)
+              ├── AWS DynamoDB (iot-telemetry — hot, TTL 48 h)
+              ├── AWS S3 (Parquet cold archive)
+              └── AWS Athena (cold queries)
 ```
 
 ### MQTT Request/Response Pattern
@@ -56,6 +62,22 @@ Gateway → MQTT iot/v1/{gatewayId}/status → MqttService → TelemetryService 
 ```
 
 Each message on `iot/v1/{gatewayId}/status` (~3 KB JSON, ~1 msg/min/gateway) is persisted as a single DynamoDB item. The write is fire-and-forget — errors are logged but never propagate back to the MQTT thread.
+
+### Telemetry Storage Tiers
+
+```
+DynamoDB iot-telemetry  ←  hot tier   (last 48 h, TTL auto-deletes older items)
+         │
+         │  ArchiveService  (daily cron, 2 AM UTC)
+         ▼
+S3 Parquet files         ←  cold tier  (partitioned by dt + gateway_id for Athena)
+         │
+         │  AthenaService
+         ▼
+Athena SQL queries       ←  unified    (TelemetryController routes transparently)
+```
+
+`GET /api/v1/{gwId}/telemetry?from=&to=` automatically routes to DynamoDB, Athena, or both based on whether the requested range falls within the 48 h hot window.
 
 ---
 
@@ -88,7 +110,7 @@ All endpoints require `Authorization: Bearer <token>` except `/auth/login`.
 | POST | `/api/v1/{gwId}/tunnels/{tunnelId}/stop` | Stop tunnel (MQTT + SSH kill + port release) |
 | GET | `/api/v1/gateways` | Live gateway status via MQTT |
 | GET | `/api/v1/{gwId}/proxy/{path}` | Proxy HTTP request through gateway |
-| GET | `/api/v1/{gwId}/telemetry?from=&to=` | Query sensor telemetry for a time range |
+| GET | `/api/v1/{gwId}/telemetry?from=&to=` | Query sensor telemetry — routes to DynamoDB, Athena, or both |
 
 Full interactive docs available at `/swagger-ui.html` when running.
 
@@ -248,13 +270,64 @@ GET /api/v1/{gwId}/telemetry?from=2025-06-01T00:00:00Z&to=2025-06-01T23:59:59Z
 Authorization: Bearer <token>
 ```
 
-Returns a JSON array of `{ "timestamp": "...", "payload": { ...sensor fields... } }` objects sorted by timestamp ascending.
+Returns a JSON array of `{ "timestamp": "...", "payload": { ...sensor fields... } }` sorted by timestamp ascending. `from`/`to` are ISO-8601 strings.
 
-Both `from` and `to` are ISO-8601 strings and map directly to DynamoDB sort key range (`BETWEEN`).
+| Range | Source | Latency |
+|-------|--------|---------|
+| Both timestamps within last 48 h | DynamoDB | ~50 ms |
+| Both timestamps older than 48 h | Athena | 2–10 s |
+| Spans the 48 h boundary | Both, merged | 2–10 s |
+
+### Cold archive setup (It3)
+
+`ArchiveService` is activated by setting `archive.s3.bucket`. It runs daily at 2 AM UTC, reads yesterday's DynamoDB records for each gateway, writes one Parquet file per gateway to S3:
+
+```
+s3://{bucket}/{prefix}dt=yyyy-MM-dd/gateway_id={gwId}/data.parquet
+```
+
+### Athena setup (It4)
+
+`AthenaService` is activated by setting `athena.output-location`. Create the Glue table once:
+
+```sql
+CREATE EXTERNAL TABLE mydb.telemetry_cold (
+  timestamp    STRING,
+  payload_json STRING)
+PARTITIONED BY (dt STRING, gateway_id STRING)
+STORED AS PARQUET
+LOCATION 's3://your-bucket/telemetry/';
+```
+
+After each archive run, register new partitions:
+
+```sql
+MSCK REPAIR TABLE mydb.telemetry_cold;
+```
+
+Query payload fields in Athena using `json_extract`:
+
+```sql
+SELECT timestamp,
+       json_extract_scalar(payload_json, '$.temp') AS temp
+FROM   mydb.telemetry_cold
+WHERE  gateway_id = 'gw-001'
+AND    dt BETWEEN '2025-06-01' AND '2025-06-07';
+```
+
+### IAM permissions required
+
+| Service | Actions |
+|---------|---------|
+| DynamoDB | `PutItem`, `Query` on `iot-telemetry` |
+| S3 | `PutObject`, `GetObject`, `ListBucket` on the archive bucket |
+| Athena | `StartQueryExecution`, `GetQueryExecution`, `GetQueryResults` |
+| Glue | `GetTable`, `GetPartitions` on the telemetry database |
+| S3 (results) | `PutObject`, `GetObject` on the Athena output location |
 
 ### AWS credentials
 
-`TelemetryService` resolves credentials via `DefaultCredentialsProvider` (IAM role on EC2/Lightsail, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars locally). Region is read from `aws.region` in `application.properties`.
+All AWS services (`TelemetryService`, `ArchiveService`, `AthenaService`) resolve credentials via `DefaultCredentialsProvider` — IAM role on EC2/Lightsail in production, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars locally.
 
 ---
 

@@ -13,6 +13,12 @@ logging.level.org.springframework.security=DEBUG
 tunnel.server.host=<server_ip>
 aws.region=us-east-1
 
+# --- Athena unified query (It4) ---
+# Activates AthenaService. Requires the telemetry_cold table to exist in Glue.
+athena.database=your_glue_database
+# athena.table=telemetry_cold      (default)
+athena.output-location=s3://your-iot-archive-bucket/athena-results/
+
 # --- Cold archive (It3) ---
 # Activates ArchiveService when set. S3 bucket must already exist.
 archive.s3.bucket=your-iot-archive-bucket
