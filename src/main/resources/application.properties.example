@@ -13,6 +13,14 @@ logging.level.org.springframework.security=DEBUG
 tunnel.server.host=<server_ip>
 aws.region=us-east-1
 
+# --- Cold archive (It3) ---
+# Activates ArchiveService when set. S3 bucket must already exist.
+archive.s3.bucket=your-iot-archive-bucket
+# S3 key prefix (must end with /). Default: telemetry/
+# archive.s3.prefix=telemetry/
+# Cron expression (UTC). Default: 2:00 AM daily.
+# archive.cron=0 0 2 * * *
+
 # --- PostgreSQL ---
 spring.datasource.url=jdbc:postgresql://localhost:5432/iot_backend
 spring.datasource.username=app
