@@ -27,6 +27,7 @@ class TunnelControllerTest extends BaseControllerTest {
 
     @BeforeEach
     void setUp() {
+        declareOwnership("alice", GW_ID);
         authHeader = bearerToken("alice", List.of(GW_ID));
     }
 

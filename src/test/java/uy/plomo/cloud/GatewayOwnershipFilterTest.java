@@ -16,6 +16,7 @@ class GatewayOwnershipFilterTest extends BaseControllerTest {
     @Test
     @DisplayName("allows access when the user owns the gateway")
     void ownedGateway_allowsRequest() throws Exception {
+        declareOwnership("alice", "gw-owned");
         when(gatewayService.getTunnelList("gw-owned")).thenReturn(Map.of());
 
         perform(get("/api/v1/gw-owned/tunnels")
@@ -26,6 +27,7 @@ class GatewayOwnershipFilterTest extends BaseControllerTest {
     @Test
     @DisplayName("returns 404 when the user does not own the gateway")
     void unownedGateway_returns404() throws Exception {
+        declareOwnership("alice", "gw-owned"); // alice owns gw-owned, NOT gw-someone-elses
         // GatewayOwnershipFilter rechaza sincrónicamente — no hay async dispatch
         mockMvc.perform(get("/api/v1/gw-someone-elses/tunnels")
                         .header("Authorization", bearerToken("alice", List.of("gw-owned"))))

@@ -1,6 +1,7 @@
 package uy.plomo.cloud;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -13,14 +14,19 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import uy.plomo.cloud.entity.Gateway;
+import uy.plomo.cloud.entity.User;
+import uy.plomo.cloud.repository.UserRepository;
 import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
@@ -46,6 +52,7 @@ public abstract class BaseControllerTest {
     @MockitoBean protected GatewayService gatewayService;
     @MockitoBean protected MqttService mqttService;
     @MockitoBean protected PortPoolService portPoolService;
+    @MockitoBean protected UserRepository userRepository;
 
     @Autowired private WebApplicationContext context;
     @Autowired protected JwtService jwtService;
@@ -72,6 +79,24 @@ public abstract class BaseControllerTest {
     protected ResultActions perform(MockHttpServletRequestBuilder request) throws Exception {
         MvcResult mvcResult = mockMvc.perform(request).andReturn();
         return mockMvc.perform(asyncDispatch(mvcResult));
+    }
+
+    /**
+     * Configura el mock de UserRepository para que el usuario dado sea dueño
+     * de los gateways indicados. Llamar en @BeforeEach o al inicio del test.
+     */
+    protected void declareOwnership(String username, String... gatewayIds) {
+        List<Gateway> gateways = Arrays.stream(gatewayIds)
+                .map(gwId -> {
+                    Gateway gw = Mockito.mock(Gateway.class);
+                    Mockito.when(gw.getId()).thenReturn(gwId);
+                    return gw;
+                })
+                .toList();
+        User user = Mockito.mock(User.class);
+        Mockito.when(user.getGateways()).thenReturn(gateways);
+        Mockito.when(userRepository.findByUsernameWithGateways(username))
+                .thenReturn(Optional.of(user));
     }
 
     protected String bearerToken(String username, List<String> gatewayIds) {
