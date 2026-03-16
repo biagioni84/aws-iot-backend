@@ -14,6 +14,7 @@ Spring Boot 4 backend for a multi-tenant IIoT gateway platform. Manages gateway 
 | Schema migrations | Flyway |
 | Security | Spring Security + JWT (JJWT) |
 | Messaging | AWS IoT Core MQTT5 (AWS IoT Device SDK) |
+| Telemetry storage | AWS DynamoDB (async SDK v2) |
 | Connection pool | HikariCP |
 | Build | Gradle |
 
@@ -30,20 +31,31 @@ Spring Boot Backend
     ├── GatewayOwnershipFilter    — enforces per-request gateway ownership (DB lookup)
     ├── AdminController           — user summary, gateway list
     ├── TunnelController          — tunnel CRUD + start/stop
+    ├── TelemetryController       — query historical sensor data
     └── LoginController           — authentication
          │
          ├── GatewayService       — synchronous JPA service
-         ├── MqttService          — MQTT5 pub/sub, request/response pattern
+         ├── MqttService          — MQTT5 pub/sub, request/response + telemetry ingest
+         ├── TelemetryService     — DynamoDB persistence for sensor data
          ├── PortPoolService      — SSH port assignment
          └── LightsailRemoteAccess — authorized_keys + Lightsail firewall management
               │
               ├── PostgreSQL (via Docker)
-              └── AWS IoT Core (MQTT)
+              ├── AWS IoT Core (MQTT)
+              └── AWS DynamoDB (iot-telemetry table)
 ```
 
 ### MQTT Request/Response Pattern
 
 Each command to a gateway is sent to `iot/v1/{gatewayId}/request/{correlationId}` and awaits a response on `iot/v1/{gatewayId}/response/{correlationId}`. Pending requests are tracked with `CompletableFuture` and timed out automatically.
+
+### Telemetry Ingest Pipeline
+
+```
+Gateway → MQTT iot/v1/{gatewayId}/status → MqttService → TelemetryService → DynamoDB iot-telemetry
+```
+
+Each message on `iot/v1/{gatewayId}/status` (~3 KB JSON, ~1 msg/min/gateway) is persisted as a single DynamoDB item. The write is fire-and-forget — errors are logged but never propagate back to the MQTT thread.
 
 ---
 
@@ -76,6 +88,7 @@ All endpoints require `Authorization: Bearer <token>` except `/auth/login`.
 | POST | `/api/v1/{gwId}/tunnels/{tunnelId}/stop` | Stop tunnel (MQTT + SSH kill + port release) |
 | GET | `/api/v1/gateways` | Live gateway status via MQTT |
 | GET | `/api/v1/{gwId}/proxy/{path}` | Proxy HTTP request through gateway |
+| GET | `/api/v1/{gwId}/telemetry?from=&to=` | Query sensor telemetry for a time range |
 
 Full interactive docs available at `/swagger-ui.html` when running.
 
@@ -213,6 +226,38 @@ sudo systemctl restart iot-backend
 
 ---
 
+## Telemetry
+
+### DynamoDB table: `iot-telemetry`
+
+The table must be created manually in AWS before deploying (no auto-create in code).
+
+| Attribute | Type | Role |
+|-----------|------|------|
+| `gateway_id` | String | Partition key |
+| `timestamp` | String (ISO-8601) | Sort key |
+| `payload` | Map | Raw sensor fields from the MQTT message |
+| `ttl` | Number (Unix epoch s) | TTL attribute — items expire 48 h after ingestion |
+
+Enable TTL in the DynamoDB console on the `ttl` attribute to activate automatic hot-storage expiration.
+
+### Query API
+
+```
+GET /api/v1/{gwId}/telemetry?from=2025-06-01T00:00:00Z&to=2025-06-01T23:59:59Z
+Authorization: Bearer <token>
+```
+
+Returns a JSON array of `{ "timestamp": "...", "payload": { ...sensor fields... } }` objects sorted by timestamp ascending.
+
+Both `from` and `to` are ISO-8601 strings and map directly to DynamoDB sort key range (`BETWEEN`).
+
+### AWS credentials
+
+`TelemetryService` resolves credentials via `DefaultCredentialsProvider` (IAM role on EC2/Lightsail, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars locally). Region is read from `aws.region` in `application.properties`.
+
+---
+
 ## Database Migrations
 
 Migrations live in `src/main/resources/db/migration/` and run automatically on startup via Flyway.
@@ -239,9 +284,11 @@ In tests: Flyway is disabled, Hibernate uses `create-drop`.
 Tests use Testcontainers 2.x — a real PostgreSQL container starts automatically. No H2, no mocks for the DB layer.
 
 Test categories:
-- **Unit tests** — `GatewayService`, `GatewayOwnershipFilter`, etc. with Mockito
-- **Controller tests** — MockMvc with `@MockitoBean GatewayService`
+- **Unit tests** — `GatewayService`, `TelemetryService`, `GatewayOwnershipFilter`, etc. with Mockito
+- **Controller tests** — MockMvc with `@MockitoBean` services (including `TelemetryService`)
 - **Integration tests** — `JpaIntegrationTest` runs against a real PostgreSQL container
+
+`TelemetryServiceTest` mocks `DynamoDbAsyncClient` directly — no AWS connection required.
 
 ---
 
@@ -251,3 +298,6 @@ Test categories:
 - The MQTT `clientId` must be unique per running instance. Running two instances with the same `clientId` causes `SESSION_TAKEN_OVER` disconnections.
 - `LightsailRemoteAccess` uses `ProcessBuilder` with separate arguments — no shell string concatenation, no injection risk.
 - All controller methods return `CompletableFuture` to avoid blocking Tomcat threads during MQTT wait.
+- Telemetry writes are fire-and-forget — a DynamoDB failure is logged but never blocks or errors the MQTT subscription.
+- The `iot-telemetry` table uses string sort keys (ISO-8601) so lexicographic order equals chronological order, making range queries correct without a GSI.
+- `TelemetryService` creates its own `DynamoDbAsyncClient` following the same pattern as `DynamoDBService`. Both use `DefaultCredentialsProvider`.

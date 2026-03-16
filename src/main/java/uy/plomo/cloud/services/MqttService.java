@@ -1,6 +1,7 @@
 package uy.plomo.cloud.services;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +36,8 @@ public class MqttService {
 
     private static final Pattern RESPONSE_PATTERN =
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/response/(.*)");
+    private static final Pattern STATUS_PATTERN =
+            Pattern.compile(TOPIC_NAMESPACE + "/(.*)/status");
 
     private static final int CONNECT_TIMEOUT_SECONDS = 30;
     private static final int RESPONSE_TIMEOUT_SECONDS = 30;
@@ -51,12 +54,14 @@ public class MqttService {
 
     private Mqtt5Client client;
     private final PendingRequestsService pendingRequests;
+    private final TelemetryService telemetryService;
 
     private final AtomicBoolean everConnected = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
 
-    public MqttService(PendingRequestsService pendingRequests) {
+    public MqttService(PendingRequestsService pendingRequests, TelemetryService telemetryService) {
         this.pendingRequests = pendingRequests;
+        this.telemetryService = telemetryService;
     }
 
     @PostConstruct
@@ -128,11 +133,28 @@ public class MqttService {
 
             log.debug("MQTT message received on topic '{}': {}", topic, payload);
 
-            Matcher matcher = RESPONSE_PATTERN.matcher(topic);
-            if (matcher.find()) {
-                String requestId = matcher.group(2);
+            Matcher responseMatcher = RESPONSE_PATTERN.matcher(topic);
+            Matcher statusMatcher  = STATUS_PATTERN.matcher(topic);
+
+            if (responseMatcher.find()) {
+                String requestId = responseMatcher.group(2);
                 log.debug("Completing pending request: {}", requestId);
                 pendingRequests.complete(requestId, payload);
+            } else if (statusMatcher.find()) {
+                String gatewayId = statusMatcher.group(1);
+                String timestamp = Instant.now().toString();
+                log.debug("Telemetry from gateway {}", gatewayId);
+                try {
+                    JSONObject json = new JSONObject(payload);
+                    telemetryService.save(gatewayId, timestamp, json)
+                            .exceptionally(ex -> {
+                                log.error("Failed to save telemetry for gateway {}: {}",
+                                        gatewayId, ex.getMessage());
+                                return null;
+                            });
+                } catch (Exception ex) {
+                    log.error("Invalid telemetry payload from gateway {}: {}", gatewayId, ex.getMessage());
+                }
             } else {
                 log.debug("Unhandled topic: {}", topic);
             }

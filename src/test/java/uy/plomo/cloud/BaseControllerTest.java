@@ -21,6 +21,7 @@ import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
+import uy.plomo.cloud.services.TelemetryService;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -53,6 +54,7 @@ public abstract class BaseControllerTest {
     @MockitoBean protected MqttService mqttService;
     @MockitoBean protected PortPoolService portPoolService;
     @MockitoBean protected UserRepository userRepository;
+    @MockitoBean protected TelemetryService telemetryService;
 
     @Autowired private WebApplicationContext context;
     @Autowired protected JwtService jwtService;
