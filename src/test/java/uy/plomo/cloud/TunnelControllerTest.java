@@ -8,8 +8,12 @@ import org.springframework.http.MediaType;
 import uy.plomo.cloud.dto.TunnelRequest;
 import uy.plomo.cloud.services.GatewayService;
 
+import uy.plomo.cloud.entity.Gateway;
+import uy.plomo.cloud.entity.User;
+
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -28,6 +32,12 @@ class TunnelControllerTest extends BaseControllerTest {
     @BeforeEach
     void setUp() {
         authHeader = bearerToken("alice", List.of(GW_ID));
+
+        Gateway mockGw = mock(Gateway.class);
+        when(mockGw.getId()).thenReturn(GW_ID);
+        User mockUser = mock(User.class);
+        when(mockUser.getGateways()).thenReturn(List.of(mockGw));
+        when(userRepository.findByUsernameWithGateways("alice")).thenReturn(Optional.of(mockUser));
     }
 
     // -------------------------------------------------------------------------

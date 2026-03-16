@@ -1,6 +1,7 @@
 package uy.plomo.cloud.services;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -10,6 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
@@ -21,20 +24,28 @@ import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.crt.mqtt5.*;
 import software.amazon.awssdk.crt.mqtt5.packets.*;
 import software.amazon.awssdk.iot.AwsIotMqtt5ClientBuilder;
+import uy.plomo.cloud.kafka.GatewayEventProducer;
+import uy.plomo.cloud.kafka.event.TelemetryEvent;
 import uy.plomo.cloud.utils.JsonConverter;
 
 @Service
 @Slf4j
 public class MqttService {
 
+    // Topic constants — change the namespace here and it propagates everywhere
     private static final String TOPIC_NAMESPACE = "iot/v1";
     private static final String CMD_REQUEST_PATTERN  = TOPIC_NAMESPACE + "/%s/request/%s";
     private static final String CMD_RESPONSE_TOPIC   = TOPIC_NAMESPACE + "/+/response/+";
     private static final String EVENT_TOPIC          = TOPIC_NAMESPACE + "/+/event/#";
     private static final String STATUS_TOPIC         = TOPIC_NAMESPACE + "/+/status";
 
+    // Regex to extract gwId and requestId from a response topic
     private static final Pattern RESPONSE_PATTERN =
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/response/(.*)");
+
+    // Regex to extract gatewayId from a status/telemetry topic
+    private static final Pattern STATUS_PATTERN =
+            Pattern.compile(TOPIC_NAMESPACE + "/([^/]+)/status");
 
     private static final int CONNECT_TIMEOUT_SECONDS = 30;
     private static final int RESPONSE_TIMEOUT_SECONDS = 30;
@@ -51,12 +62,20 @@ public class MqttService {
 
     private Mqtt5Client client;
     private final PendingRequestsService pendingRequests;
+    private final GatewayEventProducer gatewayEventProducer;
+    private final ObjectMapper objectMapper;
 
+    // Tracks whether we've successfully connected at least once
     private final AtomicBoolean everConnected = new AtomicBoolean(false);
+    // Tracks whether we're currently connected
     private final AtomicBoolean connected = new AtomicBoolean(false);
 
-    public MqttService(PendingRequestsService pendingRequests) {
+    public MqttService(PendingRequestsService pendingRequests,
+                       GatewayEventProducer gatewayEventProducer,
+                       ObjectMapper objectMapper) {
         this.pendingRequests = pendingRequests;
+        this.gatewayEventProducer = gatewayEventProducer;
+        this.objectMapper = objectMapper;
     }
 
     @PostConstruct
@@ -70,12 +89,6 @@ public class MqttService {
             public void onAttemptingConnect(Mqtt5Client client, OnAttemptingConnectReturn r) {
                 log.info("MQTT connecting to '{}' with clientId '{}'", endpoint, clientId);
             }
-
-//            @Override
-//            public void onConnectionSuccess(Mqtt5Client client, OnConnectionSuccessReturn r) {
-//                log.info("MQTT connected, reason: {}", r.getConnAckPacket().getReasonCode());
-//                connected.countDown();
-//            }
 
             @Override
             public void onConnectionSuccess(Mqtt5Client client, OnConnectionSuccessReturn r) {
@@ -128,16 +141,24 @@ public class MqttService {
 
             log.debug("MQTT message received on topic '{}': {}", topic, payload);
 
-            Matcher matcher = RESPONSE_PATTERN.matcher(topic);
-            if (matcher.find()) {
-                String requestId = matcher.group(2);
+            Matcher responseMatcher = RESPONSE_PATTERN.matcher(topic);
+            if (responseMatcher.find()) {
+                String requestId = responseMatcher.group(2);
                 log.debug("Completing pending request: {}", requestId);
                 pendingRequests.complete(requestId, payload);
             } else {
-                log.debug("Unhandled topic: {}", topic);
+                Matcher statusMatcher = STATUS_PATTERN.matcher(topic);
+                if (statusMatcher.find()) {
+                    String gatewayId = statusMatcher.group(1);
+                    forwardTelemetry(gatewayId, payload);
+                } else {
+                    log.debug("Unhandled topic: {}", topic);
+                }
             }
         };
+
         AwsIotMqtt5ClientBuilder builder = AwsIotMqtt5ClientBuilder.newWebsocketMqttBuilderWithSigv4Auth(endpoint, null);
+        // Configure exponential backoff reconnection
         builder.withMinReconnectDelayMs(RECONNECT_MIN_MS);
         builder.withMaxReconnectDelayMs(RECONNECT_MAX_MS);
         builder.withLifeCycleEvents(lifecycleEvents);
@@ -157,10 +178,37 @@ public class MqttService {
             throw new RuntimeException("Interrupted while waiting for MQTT connection", e);
         }
 
+        // Subscribe only to response, event, and status topics — not the wildcard #
         subscribe(CMD_RESPONSE_TOPIC);
         subscribe(EVENT_TOPIC);
         subscribe(STATUS_TOPIC);
     }
+
+    // -------------------------------------------------------------------------
+    // Telemetry forwarding
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parsea el payload JSON del topic de status y lo publica en Kafka.
+     *
+     * <p>Cualquier error de parseo o de Kafka se loguea pero no interrumpe
+     * el hilo de callbacks MQTT — el SDK de AWS IoT no tolera excepciones aquí.
+     */
+    private void forwardTelemetry(String gatewayId, String rawPayload) {
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(
+                    rawPayload, new TypeReference<Map<String, Object>>() {});
+            TelemetryEvent event = new TelemetryEvent(gatewayId, Instant.now(), parsed);
+            gatewayEventProducer.sendTelemetry(event);
+            log.debug("Forwarded telemetry to Kafka for gateway '{}'", gatewayId);
+        } catch (Exception e) {
+            log.error("Failed to forward telemetry for gateway '{}': {}", gatewayId, e.getMessage(), e);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
 
     private void subscribe(String topic) {
         log.info("Subscribing to topic: {}", topic);
@@ -172,6 +220,7 @@ public class MqttService {
             throw new RuntimeException("Failed to subscribe to topic: " + topic, e);
         }
     }
+
     private void resubscribe() {
         try {
             subscribe(CMD_RESPONSE_TOPIC);
@@ -204,7 +253,6 @@ public class MqttService {
                     pendingRequests.cancel(requestId); // clean up if still pending
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     log.warn("Request {} to gateway {} failed: {}", requestId, gwId, cause.getMessage());
-
                     if (cause instanceof java.util.concurrent.TimeoutException) {
                         throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT,
                                 "No response from gateway within " + RESPONSE_TIMEOUT_SECONDS + "s");

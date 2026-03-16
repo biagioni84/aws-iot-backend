@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import uy.plomo.cloud.repository.UserRepository;
 import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
@@ -46,6 +47,8 @@ public abstract class BaseControllerTest {
     @MockitoBean protected GatewayService gatewayService;
     @MockitoBean protected MqttService mqttService;
     @MockitoBean protected PortPoolService portPoolService;
+    @MockitoBean protected uy.plomo.cloud.kafka.GatewayEventProducer gatewayEventProducer;
+    @MockitoBean protected UserRepository userRepository;
 
     @Autowired private WebApplicationContext context;
     @Autowired protected JwtService jwtService;
@@ -61,17 +64,27 @@ public abstract class BaseControllerTest {
     }
 
     /**
-     * Para controllers que devuelven CompletableFuture, Spring MVC procesa la
-     * respuesta de forma asíncrona. MockMvc necesita dos pasos:
-     *   1. perform()       → inicia el request
-     *   2. asyncDispatch() → espera que el CompletableFuture se resuelva
+     * Ejecuta un request MockMvc manejando correctamente tanto respuestas síncronas
+     * como asíncronas (CompletableFuture).
      *
-     * Para respuestas síncronas del filter chain (403, 404 del ownership filter),
-     * usar mockMvc.perform() directamente.
+     * <p>Los controllers de este proyecto retornan {@code CompletableFuture}
+     * backed por {@code CompletableFuture.supplyAsync()} (ForkJoinPool). Hay una
+     * race condition: si el pool completa el future antes de que Spring MVC
+     * registre el async handling, {@code isAsyncStarted()} puede devolver
+     * {@code false} incorrectamente.
+     *
+     * <p>La solución es intentar siempre el asyncDispatch y capturar la
+     * {@code IllegalStateException} que lanza cuando no hubo async real
+     * (respuestas del filter chain como 403/404 de seguridad).
      */
     protected ResultActions perform(MockHttpServletRequestBuilder request) throws Exception {
-        MvcResult mvcResult = mockMvc.perform(request).andReturn();
-        return mockMvc.perform(asyncDispatch(mvcResult));
+        ResultActions initial = mockMvc.perform(request);
+        MvcResult result = initial.andReturn();
+        if (result.getRequest().isAsyncStarted()) {
+            result.getAsyncResult(5_000); // esperar hasta 5s que el future complete
+            return mockMvc.perform(asyncDispatch(result));
+        }
+        return initial;
     }
 
     protected String bearerToken(String username, List<String> gatewayIds) {

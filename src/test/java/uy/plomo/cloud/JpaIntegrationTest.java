@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JpaIntegrationTest {
 
     @MockitoBean MqttService mqttService;
+    @MockitoBean uy.plomo.cloud.kafka.GatewayEventProducer gatewayEventProducer;
 
     @Autowired UserRepository userRepository;
     @Autowired GatewayRepository gatewayRepository;

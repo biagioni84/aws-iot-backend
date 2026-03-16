@@ -21,12 +21,20 @@ import uy.plomo.cloud.services.MqttService;
         "port.pool.end=9010",
         "iot.instanceName=test-instance",
         "spring.flyway.enabled=false",
-        "spring.jpa.hibernate.ddl-auto=create-drop"
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        // Kafka — apuntamos a un broker inexistente y deshabilitamos el listener
+        // para que el context load no intente conectarse a Kafka real.
+        // MqttService ya está mockeado, así que GatewayEventProducer tampoco se invoca.
+        "spring.kafka.bootstrap-servers=localhost:9092",
+        "spring.kafka.listener.auto-startup=false"
 })
 class CloudApplicationTests {
 
     @MockitoBean
     MqttService mqttService;
+
+    @MockitoBean
+    uy.plomo.cloud.kafka.GatewayEventProducer gatewayEventProducer;
 
     @Test
     void contextLoads() {

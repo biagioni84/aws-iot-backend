@@ -2,11 +2,14 @@ package uy.plomo.cloud;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import uy.plomo.cloud.entity.Gateway;
+import uy.plomo.cloud.entity.User;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,6 +19,11 @@ class GatewayOwnershipFilterTest extends BaseControllerTest {
     @Test
     @DisplayName("allows access when the user owns the gateway")
     void ownedGateway_allowsRequest() throws Exception {
+        Gateway mockGw = mock(Gateway.class);
+        when(mockGw.getId()).thenReturn("gw-owned");
+        User mockUser = mock(User.class);
+        when(mockUser.getGateways()).thenReturn(List.of(mockGw));
+        when(userRepository.findByUsernameWithGateways("alice")).thenReturn(Optional.of(mockUser));
         when(gatewayService.getTunnelList("gw-owned")).thenReturn(Map.of());
 
         perform(get("/api/v1/gw-owned/tunnels")

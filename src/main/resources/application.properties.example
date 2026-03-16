@@ -34,3 +34,21 @@ spring.jpa.open-in-view=false
 # --- Flyway ---
 spring.flyway.enabled=true
 spring.flyway.locations=classpath:db/migration
+
+# --- Kafka (It2) ---
+spring.kafka.bootstrap-servers=localhost:9092
+
+# Producer
+spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer
+spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer
+# Agrega header __TypeId__ con el FQCN — el consumer lo usa para deserializar sin ambigüedad
+spring.kafka.producer.properties.spring.json.add.type.headers=true
+
+# Consumer — el ConsumerFactory explícito en KafkaConfig usa estas props también
+spring.kafka.consumer.group-id=iot-backend
+spring.kafka.consumer.auto-offset-reset=earliest
+spring.kafka.consumer.enable-auto-commit=true
+# Deserialización JSON del value — reemplaza al ConsumerFactory explícito con JsonDeserializer deprecated
+spring.kafka.consumer.value-deserializer=org.springframework.kafka.support.serializer.JsonDeserializer
+spring.kafka.consumer.properties.spring.json.value.default.type=uy.plomo.cloud.kafka.event.TelemetryEvent
+spring.kafka.consumer.properties.spring.json.trusted.packages=uy.plomo.cloud.kafka.event

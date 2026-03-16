@@ -30,6 +30,10 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
 
+    // --- Kafka (It2) ---
+    // Versión manejada por Spring Boot BOM — no especificar versión manualmente
+    implementation 'org.springframework.kafka:spring-kafka'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
 
@@ -37,6 +41,9 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter:2.0.2'
     testImplementation 'org.testcontainers:testcontainers-postgresql:2.0.2'
+
+    // EmbeddedKafka para integration tests de Kafka (sin Docker)
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
 
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
