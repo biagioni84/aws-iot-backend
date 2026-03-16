@@ -95,6 +95,41 @@ public class TelemetryService {
         );
     }
 
+    /**
+     * Queries all pages of raw DynamoDB items for a gateway in the given time range.
+     * Handles DynamoDB pagination (1 MB page limit) transparently.
+     * Package-private — used by ArchiveService.
+     */
+    CompletableFuture<List<Map<String, AttributeValue>>> queryRawPaginated(
+            String gatewayId, String from, String to) {
+        return queryPage(gatewayId, from, to, null, new ArrayList<>());
+    }
+
+    private CompletableFuture<List<Map<String, AttributeValue>>> queryPage(
+            String gatewayId, String from, String to,
+            Map<String, AttributeValue> lastKey,
+            List<Map<String, AttributeValue>> acc) {
+
+        QueryRequest.Builder req = QueryRequest.builder()
+                .tableName(TABLE)
+                .keyConditionExpression("gateway_id = :gwId AND #ts BETWEEN :from AND :to")
+                .expressionAttributeNames(Map.of("#ts", "timestamp"))
+                .expressionAttributeValues(Map.of(
+                        ":gwId", AttributeValue.builder().s(gatewayId).build(),
+                        ":from", AttributeValue.builder().s(from).build(),
+                        ":to",   AttributeValue.builder().s(to).build()
+                ));
+        if (lastKey != null) req.exclusiveStartKey(lastKey);
+
+        return dynamo.query(req.build()).thenCompose(response -> {
+            acc.addAll(response.items());
+            if (response.hasLastEvaluatedKey()) {
+                return queryPage(gatewayId, from, to, response.lastEvaluatedKey(), acc);
+            }
+            return CompletableFuture.completedFuture(acc);
+        });
+    }
+
     private static Map<String, AttributeValue> jsonObjectToAttributeMap(JSONObject json) {
         Map<String, AttributeValue> result = new HashMap<>();
         for (String key : json.keySet()) {

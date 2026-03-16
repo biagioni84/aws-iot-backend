@@ -143,7 +143,7 @@ public class MqttService {
             } else if (statusMatcher.find()) {
                 String gatewayId = statusMatcher.group(1);
                 String timestamp = Instant.now().toString();
-                log.debug("Telemetry from gateway {}", gatewayId);
+                log.info("Telemetry received from gateway {}", gatewayId);
                 try {
                     JSONObject json = new JSONObject(payload);
                     telemetryService.save(gatewayId, timestamp, json)

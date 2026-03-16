@@ -46,7 +46,38 @@ dependencies {
 
     implementation 'software.amazon.awssdk:dynamodb:2.41.23'
     implementation 'software.amazon.awssdk:dynamodb-enhanced:2.41.23'
+    implementation 'software.amazon.awssdk:s3:2.41.23'
     implementation 'software.amazon.awssdk.iotdevicesdk:aws-iot-device-sdk:1.30.0'
+
+    // Parquet cold archiving — hadoop-common provides Configuration class needed by parquet-hadoop;
+    // transitive=false keeps footprint small (~4 MB JAR). Jackson + SLF4J are already on classpath.
+    implementation('org.apache.parquet:parquet-avro:1.14.3') {
+        exclude group: 'org.apache.hadoop', module: 'hadoop-client'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-core'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-api'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-common'
+        exclude group: 'org.apache.hadoop', module: 'hadoop-hdfs-client'
+    }
+    implementation 'org.apache.avro:avro:1.11.3'
+    // hadoop-common provides Path + Configuration required by parquet-hadoop class files.
+    // Heavy infra excluded (Kerberos, ZooKeeper, Netty, Jetty, Jersey) — ~10 MB total.
+    implementation('org.apache.hadoop:hadoop-common:3.3.6') {
+        exclude group: 'org.apache.hadoop',  module: 'hadoop-auth'
+        exclude group: 'org.apache.kerby'
+        exclude group: 'com.google.protobuf'
+        exclude group: 'org.apache.curator'
+        exclude group: 'org.apache.zookeeper'
+        exclude group: 'com.nimbusds'
+        exclude group: 'io.netty'
+        exclude group: 'org.eclipse.jetty'
+        exclude group: 'com.sun.jersey'
+        exclude group: 'javax.servlet'
+        exclude group: 'org.apache.avro'
+        // Exclude competing SLF4J bindings — Spring Boot uses Logback
+        exclude group: 'org.slf4j',          module: 'slf4j-reload4j'
+        exclude group: 'org.slf4j',          module: 'slf4j-log4j12'
+        exclude group: 'log4j',              module: 'log4j'
+    }
     implementation 'org.json:json:20240303'
     implementation 'org.mindrot:jbcrypt:0.4'
 
@@ -70,6 +101,7 @@ jar {
 tasks.register('copyDependencies', Copy) {
     description = 'Copies all runtime dependencies to build/libs/lib'
     group = 'build'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from configurations.runtimeClasspath
     into "${layout.buildDirectory.get()}/libs/lib"
 }
