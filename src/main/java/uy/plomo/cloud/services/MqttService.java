@@ -113,9 +113,7 @@ public class MqttService {
                 } else {
                     log.warn("MQTT disconnected (no disconnect packet)");
                 }
-                // Fail all pending requests immediately — no point waiting 30s for a timeout
-                log.warn("Failing {} pending requests due to disconnection", pendingRequests.getPendingCount());
-                pendingRequests.failAll(new RuntimeException("MQTT connection lost"));
+                log.warn("{} pending requests will wait for reconnection or timeout", pendingRequests.getPendingCount());
             }
 
             @Override
@@ -218,8 +216,9 @@ public class MqttService {
         String topic = String.format(CMD_REQUEST_PATTERN, gwId, requestId);
         CompletableFuture<String> responseFuture = pendingRequests.create(requestId);
 
-        return publish(topic, payload.toString())
-                .thenCompose(v -> responseFuture)
+        publish(topic, payload.toString());
+
+        return responseFuture
                 .orTimeout(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .thenApply(JsonConverter::toMap)
                 .exceptionally(ex -> {
@@ -242,11 +241,7 @@ public class MqttService {
                 topic,
                 QOS.AT_LEAST_ONCE,
                 payload.getBytes(StandardCharsets.UTF_8));
-        return client.publish(publishPacket)
-                .orTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .thenAccept(result -> log.debug("PubAck: {}", result.getResultPubAck().getReasonCode()))
-                .exceptionally(e -> {
-                    throw new RuntimeException("Failed to publish to topic: " + topic, e);
-                });
+        client.publish(publishPacket);
+        return CompletableFuture.completedFuture(null);
     }
 }
