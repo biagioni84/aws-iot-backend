@@ -1,8 +1,9 @@
 package uy.plomo.cloud.services;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.enhanced.dynamodb.document.EnhancedDocument;
@@ -19,8 +20,19 @@ public class DynamoDBService {
 
     private final DynamoDbAsyncClient dynamo;
 
-    private static final String TABLE_USERS   = "users";
+    private static final String TABLE_USERS    = "users";
     private static final String TABLE_GATEWAYS = "iot-gateways";
+    private static final ObjectMapper MAPPER   = new ObjectMapper();
+
+    private static Map<String, Object> docToMap(Map<String, AttributeValue> attrMap) {
+        try {
+            return MAPPER.readValue(
+                    EnhancedDocument.fromAttributeValueMap(attrMap).toJson(),
+                    new TypeReference<>() {});
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
 
     public DynamoDBService(@Value("${aws.region}") String region) {
         this.dynamo = DynamoDbAsyncClient.builder()
@@ -74,8 +86,7 @@ public class DynamoDBService {
             if (response.items().isEmpty()) {
                 throw new ResourceNotFoundException("User not found: " + username);
             }
-            return new JSONObject(
-                    EnhancedDocument.fromAttributeValueMap(response.items().get(0)).toJson()).toMap();
+            return docToMap(response.items().get(0));
         });
     }
 
@@ -84,8 +95,7 @@ public class DynamoDBService {
             if (response.items().isEmpty()) {
                 throw new ResourceNotFoundException("Gateway not found: " + gwId);
             }
-            return new JSONObject(
-                    EnhancedDocument.fromAttributeValueMap(response.items().get(0)).toJson()).toMap();
+            return docToMap(response.items().get(0));
         });
     }
 
@@ -96,8 +106,7 @@ public class DynamoDBService {
             }
             AttributeValue tunnels = response.items().get(0).get("tunnels");
             if (tunnels == null) return Map.of();
-            return new JSONObject(
-                    EnhancedDocument.fromAttributeValueMap(tunnels.m()).toJson()).toMap();
+            return docToMap(tunnels.m());
         });
     }
 
@@ -110,8 +119,7 @@ public class DynamoDBService {
             if (tunnels == null || !tunnels.m().containsKey(tunnelId)) {
                 throw new ResourceNotFoundException("Tunnel not found: " + tunnelId);
             }
-            return new JSONObject(
-                    EnhancedDocument.fromAttributeValueMap(tunnels.m().get(tunnelId).m()).toJson()).toMap();
+            return docToMap(tunnels.m().get(tunnelId).m());
         });
     }
 

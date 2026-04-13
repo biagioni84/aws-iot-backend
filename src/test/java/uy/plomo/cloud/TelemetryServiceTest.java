@@ -1,6 +1,6 @@
 package uy.plomo.cloud.services;
 
-import org.json.JSONObject;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -43,7 +43,7 @@ class TelemetryServiceTest {
                     .thenReturn(CompletableFuture.completedFuture(
                             PutItemResponse.builder().build()));
 
-            JSONObject payload = new JSONObject(Map.of("temp", 22.5, "humidity", 60));
+            Map<String, Object> payload = Map.of("temp", 22.5, "humidity", 60);
             service.save("gw-001", "2025-06-01T12:00:00.000Z", payload).join();
 
             var captor = org.mockito.ArgumentCaptor.forClass(PutItemRequest.class);
@@ -71,7 +71,7 @@ class TelemetryServiceTest {
                     .thenReturn(CompletableFuture.failedFuture(
                             ResourceNotFoundException.builder().message("table not found").build()));
 
-            JSONObject payload = new JSONObject(Map.of("temp", 22.5));
+            Map<String, Object> payload = Map.of("temp", 22.5);
             CompletableFuture<Void> future = service.save("gw-001", "2025-06-01T12:00:00.000Z", payload);
 
             assertThatThrownBy(future::join)

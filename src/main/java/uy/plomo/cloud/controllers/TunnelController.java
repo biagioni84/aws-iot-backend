@@ -3,7 +3,7 @@ package uy.plomo.cloud.controllers;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
+import java.util.LinkedHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -95,8 +95,7 @@ public class TunnelController {
 
         return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
                 .thenCompose(tunnel -> {
-                    // Enviamos stop al gateway — ignoramos errores (puede estar offline)
-                    JSONObject command = new JSONObject();
+                    Map<String, Object> command = new LinkedHashMap<>();
                     command.put("cmd", "stop");
                     command.put("src-addr", tunnel.get("src_addr"));
                     command.put("src-port", tunnel.get("src_port"));
@@ -106,11 +105,7 @@ public class TunnelController {
                         command.put("dst-port", tunnel.get("dst_port"));
                     }
 
-                    JSONObject payload = new JSONObject();
-                    payload.put("path", "POST:/tunnel");
-                    payload.put("command", command);
-
-                    return mqttService.sendAsync(gwId, payload)
+                    return mqttService.sendAsync(gwId, Map.of("path", "POST:/tunnel", "command", command))
                             .handle((resp, ex) -> {
                                 if ("on".equals(tunnel.get("use_this_server"))) {
                                     portPoolService.releasePort((String) tunnel.get("dst_port"));
@@ -135,15 +130,11 @@ public class TunnelController {
 
         log.info("Starting tunnel {} on gateway {}", tunnelId, gwId);
 
-        JSONObject summaryPayload = new JSONObject();
-        summaryPayload.put("path", "GET:/summary");
-        summaryPayload.put("command", new JSONObject());
-
-        return mqttService.sendAsync(gwId, summaryPayload)
+        return mqttService.sendAsync(gwId, Map.of("path", "GET:/summary", "command", Map.of()))
                 .thenCompose(gwSummary ->
                         CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
                                 .thenCompose(tunnel -> {
-                                    JSONObject command = new JSONObject();
+                                    Map<String, Object> command = new LinkedHashMap<>();
                                     command.put("cmd", "start");
                                     command.put("src-addr", tunnel.get("src_addr"));
                                     command.put("src-port", tunnel.get("src_port"));
@@ -160,11 +151,7 @@ public class TunnelController {
                                         assignedPort = null;
                                     }
 
-                                    JSONObject payload = new JSONObject();
-                                    payload.put("path", "POST:/tunnel");
-                                    payload.put("command", command);
-
-                                    return mqttService.sendAsync(gwId, payload)
+                                    return mqttService.sendAsync(gwId, Map.of("path", "POST:/tunnel", "command", command))
                                             .thenApply(response -> {
                                                 if (assignedPort != null) {
                                                     gatewayService.markTunnelActive(
@@ -185,7 +172,7 @@ public class TunnelController {
 
         return CompletableFuture.supplyAsync(() -> gatewayService.getTunnelDetail(gwId, tunnelId))
                 .thenCompose(tunnel -> {
-                    JSONObject command = new JSONObject();
+                    Map<String, Object> command = new LinkedHashMap<>();
                     command.put("cmd", "stop");
                     command.put("src-addr", tunnel.get("src_addr"));
                     command.put("src-port", tunnel.get("src_port"));
@@ -195,11 +182,7 @@ public class TunnelController {
                         command.put("dst-port", tunnel.get("dst_port"));
                     }
 
-                    JSONObject payload = new JSONObject();
-                    payload.put("path", "POST:/tunnel");
-                    payload.put("command", command);
-
-                    return mqttService.sendAsync(gwId, payload)
+                    return mqttService.sendAsync(gwId, Map.of("path", "POST:/tunnel", "command", command))
                             .thenApply(response -> {
                                 if ("on".equals(tunnel.get("use_this_server"))) {
                                     String dstPort = (String) tunnel.get("dst_port");

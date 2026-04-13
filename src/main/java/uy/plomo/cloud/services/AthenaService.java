@@ -1,7 +1,7 @@
 package uy.plomo.cloud.services;
 
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -168,13 +168,20 @@ public class AthenaService {
         });
     }
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private Map<String, Object> parseRow(Row row) {
         // Columns are ordered: timestamp, payload_json (matches SELECT order)
         String timestamp   = row.data().get(0).varCharValue();
         String payloadJson = row.data().get(1).varCharValue();
-        Map<String, Object> payload = payloadJson != null && !payloadJson.isBlank()
-                ? new JSONObject(payloadJson).toMap()
-                : Map.of();
+        Map<String, Object> payload = Map.of();
+        if (payloadJson != null && !payloadJson.isBlank()) {
+            try {
+                payload = MAPPER.readValue(payloadJson, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            } catch (Exception e) {
+                log.warn("Failed to parse payload_json: {}", e.getMessage());
+            }
+        }
         return Map.of("timestamp", timestamp, "payload", payload);
     }
 

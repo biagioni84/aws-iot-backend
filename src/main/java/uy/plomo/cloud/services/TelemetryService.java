@@ -1,8 +1,8 @@
 package uy.plomo.cloud.services;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONArray;
-import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -44,9 +44,11 @@ public class TelemetryService {
      * Persists one telemetry message. Fire-and-forget: callers should attach
      * an exceptionally() handler and never block on the returned future.
      */
-    public CompletableFuture<Void> save(String gatewayId, String timestamp, JSONObject payload) {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public CompletableFuture<Void> save(String gatewayId, String timestamp, Map<String, Object> payload) {
         long ttl = Instant.now().getEpochSecond() + TTL_SECONDS;
-        Map<String, AttributeValue> payloadAttrMap = jsonObjectToAttributeMap(payload);
+        Map<String, AttributeValue> payloadAttrMap = mapToAttributeMap(payload);
 
         PutItemRequest request = PutItemRequest.builder()
                 .tableName(TABLE)
@@ -86,8 +88,7 @@ public class TelemetryService {
                             String ts = item.get("timestamp").s();
                             AttributeValue payloadAttr = item.get("payload");
                             Map<String, Object> payloadMap = payloadAttr != null
-                                    ? new JSONObject(EnhancedDocument
-                                            .fromAttributeValueMap(payloadAttr.m()).toJson()).toMap()
+                                    ? attributeMapToMap(payloadAttr.m())
                                     : Map.of();
                             return Map.<String, Object>of("timestamp", ts, "payload", payloadMap);
                         })
@@ -130,16 +131,17 @@ public class TelemetryService {
         });
     }
 
-    private static Map<String, AttributeValue> jsonObjectToAttributeMap(JSONObject json) {
+    private static Map<String, AttributeValue> mapToAttributeMap(Map<String, Object> map) {
         Map<String, AttributeValue> result = new HashMap<>();
-        for (String key : json.keySet()) {
-            result.put(key, toAttributeValue(json.get(key)));
+        for (Map.Entry<String, Object> e : map.entrySet()) {
+            result.put(e.getKey(), toAttributeValue(e.getValue()));
         }
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private static AttributeValue toAttributeValue(Object value) {
-        if (value == null || value == JSONObject.NULL) {
+        if (value == null) {
             return AttributeValue.builder().nul(true).build();
         } else if (value instanceof String s) {
             return AttributeValue.builder().s(s).build();
@@ -147,16 +149,23 @@ public class TelemetryService {
             return AttributeValue.builder().n(n.toString()).build();
         } else if (value instanceof Boolean b) {
             return AttributeValue.builder().bool(b).build();
-        } else if (value instanceof JSONObject obj) {
-            return AttributeValue.builder().m(jsonObjectToAttributeMap(obj)).build();
-        } else if (value instanceof JSONArray arr) {
-            List<AttributeValue> list = new ArrayList<>();
-            for (int i = 0; i < arr.length(); i++) {
-                list.add(toAttributeValue(arr.get(i)));
-            }
-            return AttributeValue.builder().l(list).build();
+        } else if (value instanceof Map<?, ?> m) {
+            return AttributeValue.builder().m(mapToAttributeMap((Map<String, Object>) m)).build();
+        } else if (value instanceof List<?> list) {
+            List<AttributeValue> avList = new ArrayList<>();
+            for (Object item : list) avList.add(toAttributeValue(item));
+            return AttributeValue.builder().l(avList).build();
         } else {
             return AttributeValue.builder().s(value.toString()).build();
+        }
+    }
+
+    private static Map<String, Object> attributeMapToMap(Map<String, AttributeValue> attrMap) {
+        try {
+            String json = EnhancedDocument.fromAttributeValueMap(attrMap).toJson();
+            return MAPPER.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            return Map.of();
         }
     }
 }

@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -22,7 +22,7 @@ import software.amazon.awssdk.crt.CRT;
 import software.amazon.awssdk.crt.mqtt5.*;
 import software.amazon.awssdk.crt.mqtt5.packets.*;
 import software.amazon.awssdk.iot.AwsIotMqtt5ClientBuilder;
-import uy.plomo.cloud.utils.JsonConverter;
+
 
 @Service
 @Slf4j
@@ -53,6 +53,8 @@ public class MqttService {
 
     @Value("${aws.iot.clientId}")
     private String clientId;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private Mqtt5Client client;
     private final PendingRequestsService pendingRequests;
@@ -149,7 +151,7 @@ public class MqttService {
                 String timestamp = Instant.now().toString();
                 log.info("Telemetry received from gateway {}", gatewayId);
                 try {
-                    JSONObject json = new JSONObject(payload);
+                    Map<String, Object> json = MAPPER.readValue(payload, new com.fasterxml.jackson.core.type.TypeReference<>() {});
                     telemetryService.save(gatewayId, timestamp, json)
                             .exceptionally(ex -> {
                                 log.error("Failed to save telemetry for gateway {}: {}",
@@ -217,7 +219,7 @@ public class MqttService {
      * Publish a message to a gateway and return a CompletableFuture that
      * completes when the gateway responds (or times out). Never blocks a thread.
      */
-    public CompletableFuture<Map<String, Object>> sendAsync(String gwId, JSONObject payload) {
+    public CompletableFuture<Map<String, Object>> sendAsync(String gwId, Map<String, Object> payload) {
         if (!connected.get()) {
             return CompletableFuture.completedFuture(Map.of(
                     "error", "MQTT_DISCONNECTED",
@@ -227,11 +229,22 @@ public class MqttService {
         String topic = String.format(CMD_REQUEST_PATTERN, gwId, requestId);
         CompletableFuture<String> responseFuture = pendingRequests.create(requestId);
 
-        publish(topic, payload.toString());
+        try {
+            publish(topic, MAPPER.writeValueAsString(payload));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            pendingRequests.cancel(requestId);
+            return CompletableFuture.failedFuture(e);
+        }
 
         return responseFuture
                 .orTimeout(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .thenApply(JsonConverter::toMap)
+                .thenApply(json -> {
+                    try {
+                        return MAPPER.<Map<String, Object>>readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                    } catch (Exception e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid JSON from gateway");
+                    }
+                })
                 .exceptionally(ex -> {
                     pendingRequests.cancel(requestId); // clean up if still pending
                     Throwable cause = ex.getCause() != null ? ex.getCause() : ex;

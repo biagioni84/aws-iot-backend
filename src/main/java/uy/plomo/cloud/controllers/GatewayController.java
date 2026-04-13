@@ -1,7 +1,7 @@
 package uy.plomo.cloud.controllers;
 
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONObject;
+
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -45,9 +45,9 @@ public class GatewayController {
             @PathVariable String path,
             HttpMethod httpMethod,
             @RequestBody(required = false) Map<String, Object> body) {
-        JSONObject payload = new JSONObject();
-        payload.put("path", httpMethod + ":" + path);
-        payload.put("command", body != null ? new JSONObject(body) : new JSONObject());
+        Map<String, Object> payload = Map.of(
+                "path", httpMethod + ":" + path,
+                "command", body != null ? body : Map.of());
 
         log.debug("Proxying {} to gateway {}: {}", httpMethod + ":" + path, gwId, payload);
 
