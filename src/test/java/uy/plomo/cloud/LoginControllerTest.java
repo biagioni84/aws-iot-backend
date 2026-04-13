@@ -10,6 +10,9 @@ import uy.plomo.cloud.services.GatewayService;
 
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -73,5 +76,54 @@ class LoginControllerTest extends BaseControllerTest {
         mockMvc.perform(post("/auth/login")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().is5xxServerError());
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /auth/register
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("POST /auth/register -- returns 201 with valid admin key")
+    void register_validKey_returns201() throws Exception {
+        doNothing().when(gatewayService).registerUser(any(), any());
+
+        mockMvc.perform(post("/auth/register")
+                        .header("X-Admin-Key", "test-admin-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(Map.of(
+                                "username", "newuser",
+                                "password", "pass123"
+                        ))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.username").value("newuser"));
+    }
+
+    @Test
+    @DisplayName("POST /auth/register -- returns 409 when username already exists")
+    void register_duplicate_returns409() throws Exception {
+        doThrow(new GatewayService.ConflictException("Username already exists: newuser"))
+                .when(gatewayService).registerUser(any(), any());
+
+        mockMvc.perform(post("/auth/register")
+                        .header("X-Admin-Key", "test-admin-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(Map.of(
+                                "username", "newuser",
+                                "password", "pass123"
+                        ))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("CONFLICT"));
+    }
+
+    @Test
+    @DisplayName("POST /auth/register -- returns 403 without admin key")
+    void register_noKey_returns403() throws Exception {
+        mockMvc.perform(post("/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(Map.of(
+                                "username", "newuser",
+                                "password", "pass123"
+                        ))))
+                .andExpect(status().isForbidden());
     }
 }

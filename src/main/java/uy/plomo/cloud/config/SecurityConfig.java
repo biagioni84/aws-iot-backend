@@ -8,8 +8,10 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
+import uy.plomo.cloud.security.AdminApiKeyFilter;
 import uy.plomo.cloud.security.GatewayOwnershipFilter;
 import uy.plomo.cloud.security.JwtAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
@@ -23,15 +25,17 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final GatewayOwnershipFilter gatewayOwnershipFilter;
+    private final AdminApiKeyFilter adminApiKeyFilter;
 
     @Value("${cors.allowed-origins}")
     private String allowedOrigins;
 
-    // FIX: constructor injection en lugar de @Autowired field injection
     public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter,
-                          GatewayOwnershipFilter gatewayOwnershipFilter) {
+                          GatewayOwnershipFilter gatewayOwnershipFilter,
+                          AdminApiKeyFilter adminApiKeyFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.gatewayOwnershipFilter = gatewayOwnershipFilter;
+        this.adminApiKeyFilter = adminApiKeyFilter;
     }
 
     private static final String[] SWAGGER_WHITELIST = {
@@ -62,8 +66,12 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(
+                        (request, response, e) -> response.sendError(
+                                HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(gatewayOwnershipFilter, JwtAuthenticationFilter.class);
+                .addFilterAfter(gatewayOwnershipFilter, JwtAuthenticationFilter.class)
+                .addFilterBefore(adminApiKeyFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }

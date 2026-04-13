@@ -3,6 +3,7 @@ package uy.plomo.cloud.services;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uy.plomo.cloud.dto.GatewayRegistrationRequest;
 import uy.plomo.cloud.dto.TunnelRequest;
 import uy.plomo.cloud.entity.Gateway;
 import uy.plomo.cloud.entity.Tunnel;
@@ -36,6 +37,36 @@ public class GatewayService {
     // -------------------------------------------------------------------------
     // Users
     // -------------------------------------------------------------------------
+
+    /**
+     * Cambia la contraseña del usuario autenticado.
+     * Lanza ResponseStatusException(401) si la contraseña actual no coincide.
+     */
+    @Transactional
+    public void changePassword(String username, String currentPassword, String newPassword) {
+        User user = userRepo.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
+        if (!org.mindrot.jbcrypt.BCrypt.checkpw(currentPassword, user.getPasswordHash())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "Current password is incorrect");
+        }
+        user.setPasswordHash(org.mindrot.jbcrypt.BCrypt.hashpw(newPassword, org.mindrot.jbcrypt.BCrypt.gensalt()));
+        log.info("Password changed for user {}", username);
+    }
+
+    /**
+     * Registra un nuevo usuario hasheando la contraseña con BCrypt.
+     * Lanza ConflictException si el username ya existe.
+     */
+    @Transactional
+    public void registerUser(String username, String rawPassword) {
+        if (userRepo.findByUsername(username).isPresent()) {
+            throw new ConflictException("Username already exists: " + username);
+        }
+        String hash = org.mindrot.jbcrypt.BCrypt.hashpw(rawPassword, org.mindrot.jbcrypt.BCrypt.gensalt());
+        userRepo.save(User.create(username, hash));
+        log.info("Registered user {}", username);
+    }
 
     /**
      * Retorna el usuario con sus gateways ya cargados (JOIN FETCH — sin N+1).
@@ -95,6 +126,23 @@ public class GatewayService {
         return tunnelRepo.findByIdAndGatewayId(tunnelId, gwId)
                 .map(this::tunnelToMap)
                 .orElseThrow(() -> new ResourceNotFoundException("Tunnel not found: " + tunnelId));
+    }
+
+    /**
+     * Registra un nuevo gateway vinculado al usuario autenticado.
+     * Lanza ConflictException si el gateway_id ya existe.
+     */
+    @Transactional
+    public String registerGateway(String username, GatewayRegistrationRequest req) {
+        if (gatewayRepo.existsById(req.gatewayId())) {
+            throw new ConflictException("Gateway already exists: " + req.gatewayId());
+        }
+        User user = userRepo.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
+        Gateway gw = Gateway.create(req.gatewayId(), req.publicKey(), user);
+        gatewayRepo.save(gw);
+        log.info("Registered gateway {} for user {}", req.gatewayId(), username);
+        return req.gatewayId();
     }
 
     /**

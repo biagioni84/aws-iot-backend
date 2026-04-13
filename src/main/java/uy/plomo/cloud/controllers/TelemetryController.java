@@ -5,7 +5,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import uy.plomo.cloud.services.AthenaService;
 import uy.plomo.cloud.services.TelemetryService;
+import uy.plomo.cloud.utils.TelemetryAggregator;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -41,6 +43,27 @@ public class TelemetryController {
             @PathVariable String gwId,
             @RequestParam String from,
             @RequestParam String to) {
+        return fetchRaw(gwId, from, to).thenApply(ResponseEntity::ok);
+    }
+
+    @GetMapping("/api/v1/{gwId}/telemetry/aggregate")
+    public CompletableFuture<ResponseEntity<List<TelemetryAggregator.AggregatedPoint>>> getAggregate(
+            @PathVariable String gwId,
+            @RequestParam String from,
+            @RequestParam String to,
+            @RequestParam(defaultValue = "1h") String window,
+            @RequestParam(defaultValue = "avg") String fn) {
+
+        Duration windowDuration = TelemetryAggregator.parseWindow(window);
+        TelemetryAggregator.Fn aggFn = TelemetryAggregator.parseFn(fn);
+
+        return fetchRaw(gwId, from, to)
+                .thenApply(points -> ResponseEntity.ok(
+                        TelemetryAggregator.aggregate(points, windowDuration, aggFn)));
+    }
+
+    private CompletableFuture<List<Map<String, Object>>> fetchRaw(
+            String gwId, String from, String to) {
 
         Instant hotBoundary = Instant.now().minus(HOT_WINDOW_HOURS, ChronoUnit.HOURS);
         Instant fromInstant = Instant.parse(from);
@@ -50,7 +73,6 @@ public class TelemetryController {
         boolean needsCold = fromInstant.isBefore(hotBoundary);
 
         if (needsHot && needsCold) {
-            // Range spans both sources: split at the boundary and merge
             String boundaryStr = hotBoundary.toString();
             CompletableFuture<List<Map<String, Object>>> hotFuture =
                     telemetryService.query(gwId, boundaryStr, to);
@@ -59,25 +81,20 @@ public class TelemetryController {
 
             return hotFuture.thenCombine(coldFuture, (hot, cold) -> {
                 List<Map<String, Object>> merged = new ArrayList<>(cold);
-                merged.addAll(hot);   // cold is older, hot is newer — order preserved
-                return ResponseEntity.ok(merged);
+                merged.addAll(hot);
+                return merged;
             });
         }
 
-        if (needsCold) {
-            return queryAthena(gwId, from, to).thenApply(ResponseEntity::ok);
-        }
+        if (needsCold) return queryAthena(gwId, from, to);
 
-        return telemetryService.query(gwId, from, to).thenApply(ResponseEntity::ok);
+        return telemetryService.query(gwId, from, to);
     }
 
     private CompletableFuture<List<Map<String, Object>>> queryAthena(
             String gwId, String from, String to) {
         return athenaService
                 .map(svc -> svc.query(gwId, from, to))
-                .orElseGet(() -> {
-                    // Cold storage not configured — return empty and warn once per request
-                    return CompletableFuture.completedFuture(List.of());
-                });
+                .orElseGet(() -> CompletableFuture.completedFuture(List.of()));
     }
 }

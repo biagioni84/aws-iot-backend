@@ -34,4 +34,6 @@ public class User {
     public String getUsername()   { return username; }
     public String getPasswordHash() { return passwordHash; }
     public List<Gateway> getGateways() { return gateways; }
+
+    public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
 }

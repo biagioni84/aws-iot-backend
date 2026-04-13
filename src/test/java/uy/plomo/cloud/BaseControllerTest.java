@@ -18,6 +18,7 @@ import uy.plomo.cloud.entity.Gateway;
 import uy.plomo.cloud.entity.User;
 import uy.plomo.cloud.repository.UserRepository;
 import uy.plomo.cloud.security.JwtService;
+import uy.plomo.cloud.services.GatewayEventBroadcaster;
 import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 import uy.plomo.cloud.services.PortPoolService;
@@ -41,6 +42,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
         "aws.iot.endpoint=test-endpoint",
         "aws.iot.clientId=test-client",
         "cors.allowed-origins=http://localhost:5173",
+        "admin.api-key=test-admin-key",
         "tunnel.server.host=test-server",
         "port.pool.start=9000",
         "port.pool.end=9010",
@@ -55,6 +57,7 @@ public abstract class BaseControllerTest {
     @MockitoBean protected PortPoolService portPoolService;
     @MockitoBean protected UserRepository userRepository;
     @MockitoBean protected TelemetryService telemetryService;
+    @MockitoBean protected GatewayEventBroadcaster gatewayEventBroadcaster;
 
     @Autowired private WebApplicationContext context;
     @Autowired protected JwtService jwtService;

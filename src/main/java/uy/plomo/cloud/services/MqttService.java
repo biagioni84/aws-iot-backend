@@ -38,6 +38,8 @@ public class MqttService {
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/response/(.*)");
     private static final Pattern STATUS_PATTERN =
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/status");
+    private static final Pattern EVENT_PATTERN =
+            Pattern.compile(TOPIC_NAMESPACE + "/(.*)/event/(.*)");
 
     private static final int CONNECT_TIMEOUT_SECONDS = 30;
     private static final int RESPONSE_TIMEOUT_SECONDS = 30;
@@ -55,13 +57,16 @@ public class MqttService {
     private Mqtt5Client client;
     private final PendingRequestsService pendingRequests;
     private final TelemetryService telemetryService;
+    private final GatewayEventBroadcaster eventBroadcaster;
 
     private final AtomicBoolean everConnected = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
 
-    public MqttService(PendingRequestsService pendingRequests, TelemetryService telemetryService) {
+    public MqttService(PendingRequestsService pendingRequests, TelemetryService telemetryService,
+                       GatewayEventBroadcaster eventBroadcaster) {
         this.pendingRequests = pendingRequests;
         this.telemetryService = telemetryService;
+        this.eventBroadcaster = eventBroadcaster;
     }
 
     @PostConstruct
@@ -133,6 +138,7 @@ public class MqttService {
 
             Matcher responseMatcher = RESPONSE_PATTERN.matcher(topic);
             Matcher statusMatcher  = STATUS_PATTERN.matcher(topic);
+            Matcher eventMatcher   = EVENT_PATTERN.matcher(topic);
 
             if (responseMatcher.find()) {
                 String requestId = responseMatcher.group(2);
@@ -153,6 +159,11 @@ public class MqttService {
                 } catch (Exception ex) {
                     log.error("Invalid telemetry payload from gateway {}: {}", gatewayId, ex.getMessage());
                 }
+            } else if (eventMatcher.find()) {
+                String gatewayId = eventMatcher.group(1);
+                String eventType = eventMatcher.group(2);
+                log.debug("Event '{}' received from gateway {}", eventType, gatewayId);
+                eventBroadcaster.broadcast(gatewayId, eventType, payload);
             } else {
                 log.debug("Unhandled topic: {}", topic);
             }

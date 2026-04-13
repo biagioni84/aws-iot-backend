@@ -35,11 +35,10 @@ class GatewayOwnershipFilterTest extends BaseControllerTest {
     }
 
     @Test
-    @DisplayName("returns 403 when no token is provided")
-    void noToken_returns403() throws Exception {
-        // Spring Security rechaza sincrónicamente — no hay async dispatch
+    @DisplayName("returns 401 when no token is provided")
+    void noToken_returns401() throws Exception {
         mockMvc.perform(get("/api/v1/gw-owned/tunnels"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

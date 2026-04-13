@@ -16,6 +16,6 @@ public interface TunnelRepository extends JpaRepository<Tunnel, String> {
     Optional<Tunnel> findByIdAndGatewayId(String id, String gatewayId);
 
     /** Todos los tunnels que tienen un puerto asignado (para reconstruir PortPool al reiniciar) */
-    @Query("SELECT t FROM Tunnel t WHERE t.assignedPort IS NOT NULL")
+    @Query("SELECT t FROM Tunnel t JOIN FETCH t.gateway WHERE t.assignedPort IS NOT NULL")
     List<Tunnel> findAllWithAssignedPort();
 }

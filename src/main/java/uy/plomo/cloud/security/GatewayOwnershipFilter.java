@@ -31,7 +31,7 @@ public class GatewayOwnershipFilter extends OncePerRequestFilter {
     private static final Pattern GW_PATH_PATTERN =
             Pattern.compile("^/api/v1/([^/]+)/.*$");
 
-    private static final Set<String> NON_GATEWAY_SEGMENTS = Set.of("summary", "gateways");
+    private static final Set<String> NON_GATEWAY_SEGMENTS = Set.of("summary", "gateways", "user");
 
     private final UserRepository userRepository;
 

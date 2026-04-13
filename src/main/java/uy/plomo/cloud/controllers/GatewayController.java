@@ -3,10 +3,13 @@ package uy.plomo.cloud.controllers;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import uy.plomo.cloud.dto.GatewayRegistrationRequest;
+import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 
 import java.util.Map;
@@ -18,9 +21,20 @@ import java.util.concurrent.CompletableFuture;
 public class GatewayController {
 
     private final MqttService mqttService;
+    private final GatewayService gatewayService;
 
-    public GatewayController(MqttService mqttService) {
+    public GatewayController(MqttService mqttService, GatewayService gatewayService) {
         this.mqttService = mqttService;
+        this.gatewayService = gatewayService;
+    }
+
+    @PostMapping("/api/v1/gateways")
+    public ResponseEntity<Map<String, String>> registerGateway(
+            @AuthenticationPrincipal String username,
+            @RequestBody GatewayRegistrationRequest req) {
+        String gatewayId = gatewayService.registerGateway(username, req);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(Map.of("gateway_id", gatewayId));
     }
 
     @RequestMapping(value = "/api/v1/{gwId}/proxy/{*path}",

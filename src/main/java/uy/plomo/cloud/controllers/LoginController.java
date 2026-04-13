@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,6 +15,7 @@ import uy.plomo.cloud.security.JwtService;
 import uy.plomo.cloud.services.GatewayService;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -22,6 +24,7 @@ public class LoginController {
 
     public record LoginRequest(String username, String password) {}
     public record LoginResponse(String token, String status) {}
+    public record RegisterRequest(String username, String password) {}
 
     private final JwtService jwtService;
     private final GatewayService gatewayService;
@@ -29,6 +32,14 @@ public class LoginController {
     public LoginController(JwtService jwtService, GatewayService gatewayService) {
         this.jwtService = jwtService;
         this.gatewayService = gatewayService;
+    }
+
+    @PostMapping("/auth/register")
+    @Operation(summary = "Register a new user (admin only)", description = "Requires X-Admin-Key header.")
+    public ResponseEntity<Map<String, String>> register(@RequestBody RegisterRequest req) {
+        gatewayService.registerUser(req.username(), req.password());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(Map.of("username", req.username()));
     }
 
     @PostMapping("/auth/login")
