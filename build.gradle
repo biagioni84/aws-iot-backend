@@ -79,7 +79,7 @@ dependencies {
         exclude group: 'org.slf4j',          module: 'slf4j-log4j12'
         exclude group: 'log4j',              module: 'log4j'
     }
-    implementation 'org.json:json:20240303'
+
     implementation 'org.mindrot:jbcrypt:0.4'
 
     implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.1"
