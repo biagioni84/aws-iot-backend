@@ -2,8 +2,8 @@ package uy.plomo.cloud.controllers;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,10 +28,12 @@ public class LoginController {
 
     private final JwtService jwtService;
     private final GatewayService gatewayService;
+    private final PasswordEncoder passwordEncoder;
 
-    public LoginController(JwtService jwtService, GatewayService gatewayService) {
+    public LoginController(JwtService jwtService, GatewayService gatewayService, PasswordEncoder passwordEncoder) {
         this.jwtService = jwtService;
         this.gatewayService = gatewayService;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @PostMapping("/auth/register")
@@ -48,7 +50,7 @@ public class LoginController {
         return CompletableFuture.supplyAsync(() -> {
             var user = gatewayService.getUserWithGateways(req.username());
 
-            if (!BCrypt.checkpw(req.password(), user.getPasswordHash())) {
+            if (!passwordEncoder.matches(req.password(), user.getPasswordHash())) {
                 throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
             }
 

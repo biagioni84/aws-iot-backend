@@ -137,7 +137,7 @@ Unowned gateway access returns **404** (not 403) to avoid revealing whether a ga
 **Stop:**
 1. Send `stop` command to gateway via MQTT
 2. On success: release port from pool, remove `authorized_keys` entry, close Lightsail firewall port
-3. Kill the SSH process listening on that port (`sudo kill -9 <pid>`) — handles cases where the gateway does not clean up correctly
+3. Kill the SSH process listening on that port (`kill -9 <pid>` via `ProcessBuilder` with `pid: host` + `CAP_KILL`) — handles cases where the gateway does not clean up correctly
 4. Persist `state=STOPPED`, `assignedPort=null` to DB
 
 ---
@@ -206,44 +206,53 @@ Generate a bcrypt hash at https://bcrypt-generator.com (rounds = 10).
 
 ## Production Deployment
 
-The app runs as a `systemd` service. PostgreSQL runs in Docker.
+The app and PostgreSQL both run in Docker on AWS Lightsail. Images are built locally and pushed to ECR; the server pulls and restarts.
+
+See [ECR-Deployment.md](ECR-Deployment.md) for the full guide. Summary:
+
+```bash
+# 1. Build and push (local machine)
+docker build --no-cache --platform linux/amd64 --provenance=false \
+    -t iot-cloud:v1.01 .
+docker tag iot-cloud:v1.01 \
+    <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
+docker push <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
+
+# 2. First deploy only — one-time server setup
+./setup_server.sh v1.01
+
+# 3. Deploy (every release)
+./deploy_update.sh v1.01
+```
 
 ### File layout on server
 
 ```
 /home/bitnami/
-├── app.jar                    ← lean jar (no dependencies)
-├── lib/                       ← runtime dependencies
-├── application.properties     ← production config (not in git)
-└── docker-compose.prod.yml
+├── config/
+│   └── application.properties     ← production config (not in git)
+├── .aws/
+│   └── credentials                ← AWS credentials (not in git)
+├── docker-compose.prod.yml        ← manually maintained
+├── setup_server.sh                ← one-time setup (copy from repo)
+└── deploy_update.sh               ← run on every release (copy from repo)
 ```
 
-### Start PostgreSQL
+### Manage containers
 
 ```bash
+# Status
+docker ps --filter "name=iot-"
+
+# Logs
+docker logs -f iot-app
+
+# Restart app only
+docker-compose -f docker-compose.prod.yml restart app
+
+# Full restart (including postgres)
+docker-compose -f docker-compose.prod.yml down
 docker-compose -f docker-compose.prod.yml up -d
-```
-
-### Manage the service
-
-```bash
-sudo systemctl start iot-backend
-sudo systemctl stop iot-backend
-sudo systemctl restart iot-backend
-journalctl -u iot-backend.service -f
-```
-
-### Deploy a new version
-
-```bash
-# On dev machine
-./gradlew build
-
-# Upload
-scp build/libs/app.jar build/libs/lib/ user@server:/home/bitnami/
-
-# On server
-sudo systemctl restart iot-backend
 ```
 
 ---

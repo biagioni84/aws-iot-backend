@@ -3,9 +3,14 @@ package uy.plomo.cloud.platform;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.lightsail.LightsailClient;
+import software.amazon.awssdk.services.lightsail.model.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -24,6 +29,7 @@ import java.util.stream.Collectors;
  *   GatewayPorts clientspecified
  *   PermitTTY no
  *   ForceCommand echo 'Tunnel only'
+ *   StrictModes no
  */
 @Service
 @Slf4j
@@ -40,6 +46,14 @@ public class LightsailRemoteAccess {
     @Value("${ssh.tunnel.user:tunneluser}")
     private String tunnelUser;
 
+    private final LightsailClient lightsail;
+
+    public LightsailRemoteAccess(@Value("${aws.region}") String region) {
+        this.lightsail = LightsailClient.builder()
+                .region(Region.of(region))
+                .build();
+    }
+
     private String authKeysPath() {
         return "/home/" + tunnelUser + "/.ssh/authorized_keys";
     }
@@ -52,7 +66,6 @@ public class LightsailRemoteAccess {
     public void addGatewayKey(String pubkey, String port) {
         List<String> lines = readAuthorizedKeys();
 
-        // Verificar que el puerto no esté ya asignado a otra key
         String portMarker = "permitlisten=\"0.0.0.0:" + port + "\"";
         boolean portInUseByOther = lines.stream()
                 .anyMatch(l -> l.contains(portMarker) && !l.contains(pubkey));
@@ -77,8 +90,6 @@ public class LightsailRemoteAccess {
 
     /**
      * Elimina la línea de authorized_keys que corresponde al puerto dado.
-     * Se busca por puerto en lugar de pubkey porque al liberar un puerto
-     * no siempre se tiene la pubkey disponible.
      */
     public void removeGatewayKeyByPort(String port) {
         List<String> lines = readAuthorizedKeys();
@@ -98,12 +109,17 @@ public class LightsailRemoteAccess {
     }
 
     private List<String> readAuthorizedKeys() {
-        ShellResult result = exec("sudo", "cat", authKeysPath());
-        if (result.exit() != 0 || result.out().isBlank()) return new ArrayList<>();
-        return Arrays.stream(result.out().split("\n"))
-                .map(String::trim)
-                .filter(s -> !s.isBlank())
-                .collect(Collectors.toCollection(ArrayList::new));
+        Path path = Path.of(authKeysPath());
+        try {
+            if (!Files.exists(path)) return new ArrayList<>();
+            return Files.readAllLines(path, StandardCharsets.UTF_8).stream()
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .collect(Collectors.toCollection(ArrayList::new));
+        } catch (IOException e) {
+            log.warn("Could not read {}: {}", path, e.getMessage());
+            return new ArrayList<>();
+        }
     }
 
     private void writeAuthorizedKeys(List<String> lines) {
@@ -111,29 +127,58 @@ public class LightsailRemoteAccess {
         writeFile(authKeysPath(), content);
     }
 
+    /**
+     * Opens a Lightsail firewall port via AWS SDK.
+     */
     public ShellResult addInboundRule(String port) {
         log.info("Opening Lightsail port {}", port);
-        return exec("aws", "lightsail", "open-instance-public-ports",
-                "--instance-name", instanceName,
-                "--port-info", String.format("fromPort=%s,protocol=TCP,toPort=%s,cidrs=%s",
-                        port, port, EXTERNAL_CIDR));
+        try {
+            int p = Integer.parseInt(port);
+            lightsail.openInstancePublicPorts(OpenInstancePublicPortsRequest.builder()
+                    .instanceName(instanceName)
+                    .portInfo(PortInfo.builder()
+                            .fromPort(p)
+                            .toPort(p)
+                            .protocol(NetworkProtocol.TCP)
+                            .cidrs(EXTERNAL_CIDR)
+                            .build())
+                    .build());
+            return new ShellResult(0, "Port " + port + " opened", "");
+        } catch (Exception e) {
+            log.error("Failed to open port {}: {}", port, e.getMessage());
+            return new ShellResult(1, "", e.getMessage());
+        }
     }
-
-    public ShellResult removeInboundRule(String port) {
-        log.info("Closing Lightsail port {}", port);
-        return exec("aws", "lightsail", "close-instance-public-ports",
-                "--instance-name", instanceName,
-                "--port-info", String.format("fromPort=%s,protocol=TCP,toPort=%s,cidrs=%s",
-                        port, port, EXTERNAL_CIDR));
-    }
-
 
     /**
-     * Parsea `sudo lsof -P -i -n` y devuelve todas las conexiones sshd
-     * activas (no root, IPv4, en estado LISTEN).
+     * Closes a Lightsail firewall port via AWS SDK.
+     */
+    public ShellResult removeInboundRule(String port) {
+        log.info("Closing Lightsail port {}", port);
+        try {
+            int p = Integer.parseInt(port);
+            lightsail.closeInstancePublicPorts(CloseInstancePublicPortsRequest.builder()
+                    .instanceName(instanceName)
+                    .portInfo(PortInfo.builder()
+                            .fromPort(p)
+                            .toPort(p)
+                            .protocol(NetworkProtocol.TCP)
+                            .cidrs(EXTERNAL_CIDR)
+                            .build())
+                    .build());
+            return new ShellResult(0, "Port " + port + " closed", "");
+        } catch (Exception e) {
+            log.error("Failed to close port {}: {}", port, e.getMessage());
+            return new ShellResult(1, "", e.getMessage());
+        }
+    }
+
+    /**
+     * Parsea `lsof -P -i -n` y devuelve todas las conexiones sshd activas.
+     * Requiere que el contenedor corra con --pid=host.
      */
     public List<Map<String, Object>> listSshConnections() {
-        String out = exec("sudo", "lsof", "-P", "-i", "-n").out();
+        String out = exec("lsof", "-P", "-i", "-n").out();
 
         return Arrays.stream(out.split("\n"))
                 .map(line -> line.trim().split("\\s+"))
@@ -168,21 +213,18 @@ public class LightsailRemoteAccess {
                 .collect(Collectors.toList());
     }
 
-    /** Devuelve solo las conexiones con escucha externa (host == *). */
     public List<Map<String, Object>> listShConnected() {
         return listSshConnections().stream()
                 .filter(e -> Boolean.TRUE.equals(e.get("external")))
                 .collect(Collectors.toList());
     }
 
-    /** Devuelve los datos de túnel SSH para un usuario dado. */
     public List<Map<String, Object>> getTunnelData(String user) {
         return listSshConnections().stream()
                 .filter(c -> user.equals(c.get("user")))
                 .collect(Collectors.toList());
     }
 
-    /** Mata el proceso SSH que está escuchando en el puerto dado. */
     public ShellResult killSshTunnelByPort(String port) {
         List<Map<String, Object>> connections = listSshConnections();
         Optional<Map<String, Object>> match = connections.stream()
@@ -194,13 +236,13 @@ public class LightsailRemoteAccess {
             return new ShellResult(-1, "", "no tunnel found on port " + port);
         }
 
-        String pid = (String) match.get().get("pid");
+        String pid  = (String) match.get().get("pid");
         String user = (String) match.get().get("user");
-        ShellResult result = exec("sudo", "kill", "-9", pid);
+        ShellResult result = exec("kill", "-9", pid);
         log.info("Killed SSH tunnel on port {} (user={}, pid={})", port, user, pid);
         return result;
     }
-    /** Mata el proceso SSH del usuario por PID. */
+
     public ShellResult killSshTunnel(String user) {
         List<Map<String, Object>> tunnelData = getTunnelData(user);
         if (tunnelData.isEmpty()) {
@@ -208,20 +250,16 @@ public class LightsailRemoteAccess {
             return new ShellResult(-1, "", "no tunnel found");
         }
         String pid = (String) tunnelData.get(0).get("pid");
-        ShellResult result = exec("sudo", "kill", "-9", pid);
+        ShellResult result = exec("kill", "-9", pid);
         log.info("Killed tunnel for user {} with pid {}", user, pid);
         return result;
     }
 
-    /** Mata un proceso por PID. */
     public ShellResult killProcess(String pid) {
         log.info("Killing process with pid: {}", pid);
-        return exec("sudo", "kill", "-9", pid);
+        return exec("kill", "-9", pid);
     }
 
-    /**
-     * Devuelve true si la conexión lleva más de 120 segundos sin estar abierta.
-     */
     public boolean isStale(Map<String, Object> conn) {
         Object lastOpenObj = conn.get("last-open");
         long lastOpen = lastOpenObj != null ? ((Number) lastOpenObj).longValue() : 0L;
@@ -231,9 +269,34 @@ public class LightsailRemoteAccess {
     }
 
     /**
-     * Ejecuta un comando con argumentos separados via ProcessBuilder.
-     * Nunca concatena strings en un bash -c, eliminando el riesgo de
-     * shell injection independientemente del contenido de los argumentos.
+     * Escribe contenido a un archivo usando Java NIO con escritura atómica
+     * (archivo temporal + move) para evitar lecturas parciales por sshd.
+     */
+    private void writeFile(String pathStr, String content) {
+        Path target = Path.of(pathStr);
+        try {
+            Files.createDirectories(target.getParent());
+            Path tmp = Files.createTempFile(target.getParent(), ".authorized_keys_", ".tmp");
+            try {
+                Files.writeString(tmp, content, StandardCharsets.UTF_8,
+                        StandardOpenOption.TRUNCATE_EXISTING);
+                Files.setPosixFilePermissions(tmp, PosixFilePermissions.fromString("rw-rw----"));
+                Files.move(tmp, target,
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception e) {
+                Files.deleteIfExists(tmp);
+                throw e;
+            }
+            log.debug("Wrote {}", pathStr);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write " + pathStr, e);
+        }
+    }
+
+    /**
+     * Ejecuta un comando via ProcessBuilder — sin shell injection.
+     * Para lsof/kill requiere que el contenedor corra con --pid=host y --cap-add=KILL.
      */
     private ShellResult exec(String... args) {
         String cmdDisplay = String.join(" ", args);
@@ -244,7 +307,7 @@ public class LightsailRemoteAccess {
             ProcessBuilder pb = new ProcessBuilder(args);
             pb.redirectErrorStream(true);
             proc = pb.start();
-            proc.getOutputStream().close(); // evita bloqueos interactivos
+            proc.getOutputStream().close();
 
             boolean finished = proc.waitFor(EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!finished) {
@@ -263,34 +326,6 @@ public class LightsailRemoteAccess {
             return new ShellResult(-1, "", e.getMessage());
         } finally {
             if (proc != null && proc.isAlive()) proc.destroy();
-        }
-    }
-
-    /**
-     * Escribe contenido a un archivo via `sudo tee`.
-     * Usa ProcessBuilder con args separados — sin shell injection.
-     */
-    private void writeFile(String path, String content) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("sudo", "tee", path);
-            pb.redirectErrorStream(true); // merge stderr into stdout so we can log it
-            Process proc = pb.start();
-            proc.getOutputStream().write(content.getBytes(StandardCharsets.UTF_8));
-            proc.getOutputStream().close();
-            boolean finished = proc.waitFor(EXEC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            String out = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            if (!finished) {
-                proc.destroyForcibly();
-                throw new RuntimeException("tee timed out writing " + path);
-            }
-            if (proc.exitValue() != 0) {
-                log.error("tee failed writing {}: {}", path, out);
-                throw new RuntimeException("tee exited with " + proc.exitValue() + ": " + out);
-            }
-            log.debug("Wrote {}", path);
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            throw new RuntimeException("Failed to write " + path, e);
         }
     }
 }

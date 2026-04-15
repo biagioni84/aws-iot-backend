@@ -40,29 +40,30 @@ dependencies {
 
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
-    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
-    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
 
     implementation 'software.amazon.awssdk:dynamodb:2.41.23'
     implementation 'software.amazon.awssdk:dynamodb-enhanced:2.41.23'
     implementation 'software.amazon.awssdk:s3:2.41.23'
     implementation 'software.amazon.awssdk:athena:2.41.23'
+    implementation 'software.amazon.awssdk:lightsail:2.41.23'
     implementation 'software.amazon.awssdk.iotdevicesdk:aws-iot-device-sdk:1.30.0'
 
     // Parquet cold archiving — hadoop-common provides Configuration class needed by parquet-hadoop;
     // transitive=false keeps footprint small (~4 MB JAR). Jackson + SLF4J are already on classpath.
-    implementation('org.apache.parquet:parquet-avro:1.14.3') {
+    implementation('org.apache.parquet:parquet-avro:1.15.1') {
         exclude group: 'org.apache.hadoop', module: 'hadoop-client'
         exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-core'
         exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-api'
         exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-common'
         exclude group: 'org.apache.hadoop', module: 'hadoop-hdfs-client'
     }
-    implementation 'org.apache.avro:avro:1.11.3'
+    implementation 'org.apache.avro:avro:1.12.0'
     // hadoop-common provides Path + Configuration required by parquet-hadoop class files.
     // Heavy infra excluded (Kerberos, ZooKeeper, Netty, Jetty, Jersey) — ~10 MB total.
-    implementation('org.apache.hadoop:hadoop-common:3.3.6') {
+    implementation('org.apache.hadoop:hadoop-common:3.4.1') {
         exclude group: 'org.apache.hadoop',  module: 'hadoop-auth'
         exclude group: 'org.apache.kerby'
         exclude group: 'com.google.protobuf'
@@ -80,12 +81,21 @@ dependencies {
         exclude group: 'log4j',              module: 'log4j'
     }
 
-    implementation 'org.mindrot:jbcrypt:0.4'
-
     implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.1"
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    compileOnly 'org.projectlombok:lombok:1.18.36'
+    annotationProcessor 'org.projectlombok:lombok:1.18.36'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    constraints {
+        implementation('com.google.guava:guava:33.4.0-jre') {
+            because 'Hadoop trae una version de 2018 vulnerable'
+        }
+        implementation('org.apache.commons:commons-compress:1.27.1') {
+            because 'CVE-2024-25710, CVE-2024-26308 — infinite loop DoS on crafted archives'
+        }
+        implementation('commons-codec:commons-codec:1.16.0') {
+            because 'Vulnerabilidades en versiones < 1.13'
+        }
+    }
 }
 
 jar {

@@ -1,6 +1,7 @@
 package uy.plomo.cloud.services;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uy.plomo.cloud.dto.GatewayRegistrationRequest;
@@ -23,13 +24,16 @@ public class GatewayService {
     private final UserRepository userRepo;
     private final GatewayRepository gatewayRepo;
     private final TunnelRepository tunnelRepo;
+    private final PasswordEncoder passwordEncoder;
 
     public GatewayService(UserRepository userRepo,
                           GatewayRepository gatewayRepo,
-                          TunnelRepository tunnelRepo) {
+                          TunnelRepository tunnelRepo,
+                          PasswordEncoder passwordEncoder) {
         this.userRepo = userRepo;
         this.gatewayRepo = gatewayRepo;
         this.tunnelRepo = tunnelRepo;
+        this.passwordEncoder = passwordEncoder;
     }
 
 
@@ -46,11 +50,11 @@ public class GatewayService {
     public void changePassword(String username, String currentPassword, String newPassword) {
         User user = userRepo.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
-        if (!org.mindrot.jbcrypt.BCrypt.checkpw(currentPassword, user.getPasswordHash())) {
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.UNAUTHORIZED, "Current password is incorrect");
         }
-        user.setPasswordHash(org.mindrot.jbcrypt.BCrypt.hashpw(newPassword, org.mindrot.jbcrypt.BCrypt.gensalt()));
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
         log.info("Password changed for user {}", username);
     }
 
@@ -63,7 +67,7 @@ public class GatewayService {
         if (userRepo.findByUsername(username).isPresent()) {
             throw new ConflictException("Username already exists: " + username);
         }
-        String hash = org.mindrot.jbcrypt.BCrypt.hashpw(rawPassword, org.mindrot.jbcrypt.BCrypt.gensalt());
+        String hash = passwordEncoder.encode(rawPassword);
         userRepo.save(User.create(username, hash));
         log.info("Registered user {}", username);
     }

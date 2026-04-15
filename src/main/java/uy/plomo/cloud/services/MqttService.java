@@ -5,7 +5,6 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
@@ -41,7 +40,7 @@ public class MqttService {
     private static final Pattern EVENT_PATTERN =
             Pattern.compile(TOPIC_NAMESPACE + "/(.*)/event/(.*)");
 
-    private static final int CONNECT_TIMEOUT_SECONDS = 30;
+    private static final int SUBSCRIBE_TIMEOUT_SECONDS = 10;
     private static final int RESPONSE_TIMEOUT_SECONDS = 30;
 
     // Exponential backoff: start at 1s, double each attempt, cap at 30s
@@ -61,7 +60,6 @@ public class MqttService {
     private final TelemetryService telemetryService;
     private final GatewayEventBroadcaster eventBroadcaster;
 
-    private final AtomicBoolean everConnected = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
 
     public MqttService(PendingRequestsService pendingRequests, TelemetryService telemetryService,
@@ -75,33 +73,17 @@ public class MqttService {
     public void init() {
         log.info("Initializing MQTT5 client, connecting to: {}", endpoint);
 
-        CountDownLatch initialConnect = new CountDownLatch(1);
-
         Mqtt5ClientOptions.LifecycleEvents lifecycleEvents = new Mqtt5ClientOptions.LifecycleEvents() {
             @Override
             public void onAttemptingConnect(Mqtt5Client client, OnAttemptingConnectReturn r) {
                 log.info("MQTT connecting to '{}' with clientId '{}'", endpoint, clientId);
             }
 
-//            @Override
-//            public void onConnectionSuccess(Mqtt5Client client, OnConnectionSuccessReturn r) {
-//                log.info("MQTT connected, reason: {}", r.getConnAckPacket().getReasonCode());
-//                connected.countDown();
-//            }
-
             @Override
             public void onConnectionSuccess(Mqtt5Client client, OnConnectionSuccessReturn r) {
                 log.info("MQTT connected, reason: {}", r.getConnAckPacket().getReasonCode());
                 connected.set(true);
-
-                if (everConnected.compareAndSet(false, true)) {
-                    // First connection — unblock init()
-                    initialConnect.countDown();
-                } else {
-                    // Reconnection — resubscribe since the broker doesn't remember us
-                    log.info("MQTT reconnected — resubscribing to topics");
-                    resubscribe();
-                }
+                resubscribe();
             }
 
             @Override
@@ -170,6 +152,7 @@ public class MqttService {
                 log.debug("Unhandled topic: {}", topic);
             }
         };
+
         AwsIotMqtt5ClientBuilder builder = AwsIotMqtt5ClientBuilder.newWebsocketMqttBuilderWithSigv4Auth(endpoint, null);
         builder.withMinReconnectDelayMs(RECONNECT_MIN_MS);
         builder.withMaxReconnectDelayMs(RECONNECT_MAX_MS);
@@ -180,26 +163,14 @@ public class MqttService {
         builder.close();
 
         client.start();
-
-        try {
-            if (!initialConnect.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("MQTT connection timeout after " + CONNECT_TIMEOUT_SECONDS + "s");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while waiting for MQTT connection", e);
-        }
-
-        subscribe(CMD_RESPONSE_TOPIC);
-        subscribe(EVENT_TOPIC);
-        subscribe(STATUS_TOPIC);
+        log.info("MQTT client started — connecting in background, will retry automatically on failure");
     }
 
     private void subscribe(String topic) {
         log.info("Subscribing to topic: {}", topic);
         SubscribePacket subscribePacket = SubscribePacket.of(topic, QOS.AT_LEAST_ONCE);
         try {
-            SubAckPacket ack = client.subscribe(subscribePacket).get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            SubAckPacket ack = client.subscribe(subscribePacket).get(SUBSCRIBE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             log.info("Subscribed to '{}', ack: {}", topic, ack.getReasonCodes());
         } catch (Exception e) {
             throw new RuntimeException("Failed to subscribe to topic: " + topic, e);

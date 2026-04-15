@@ -3,7 +3,7 @@ package uy.plomo.cloud;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mindrot.jbcrypt.BCrypt;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.http.MediaType;
 import uy.plomo.cloud.entity.User;
 import uy.plomo.cloud.services.GatewayService;
@@ -21,11 +21,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class LoginControllerTest extends BaseControllerTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
     @Test
     @DisplayName("returns 200 and a JWT token when credentials are valid")
     void login_validCredentials_returnsToken() throws Exception {
-        User alice = User.create("alice", BCrypt.hashpw("secret123", BCrypt.gensalt()));
+        User alice = User.create("alice", encoder.encode("secret123"));
         when(gatewayService.getUserWithGateways("alice")).thenReturn(alice);
 
         perform(post("/auth/login")
@@ -42,7 +43,7 @@ class LoginControllerTest extends BaseControllerTest {
     @Test
     @DisplayName("returns 401 when password is wrong")
     void login_wrongPassword_returns401() throws Exception {
-        User alice = User.create("alice", BCrypt.hashpw("correct-password", BCrypt.gensalt()));
+        User alice = User.create("alice", encoder.encode("correct-password"));
         when(gatewayService.getUserWithGateways("alice")).thenReturn(alice);
 
         perform(post("/auth/login")
