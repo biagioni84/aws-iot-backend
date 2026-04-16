@@ -211,18 +211,22 @@ The app and PostgreSQL both run in Docker on AWS Lightsail. Images are built loc
 See [ECR-Deployment.md](ECR-Deployment.md) for the full guide. Summary:
 
 ```bash
+# Set once in your shell (or ~/.bashrc)
+export ECR_REGISTRY=<account-id>.dkr.ecr.<region>.amazonaws.com
+export ECR_REPO=<your-org>/<your-app>
+export AWS_REGION=<region>
+export TAG=v1.01
+
 # 1. Build and push (local machine)
-docker build --no-cache --platform linux/amd64 --provenance=false \
-    -t iot-cloud:v1.01 .
-docker tag iot-cloud:v1.01 \
-    <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
-docker push <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
+docker build --no-cache --platform linux/amd64 --provenance=false -t "app:$TAG" .
+docker tag "app:$TAG" "$ECR_REGISTRY/$ECR_REPO:$TAG"
+docker push "$ECR_REGISTRY/$ECR_REPO:$TAG"
 
 # 2. First deploy only — one-time server setup
-./setup_server.sh v1.01
+./setup_server.sh "$TAG"
 
 # 3. Deploy (every release)
-./deploy_update.sh v1.01
+./deploy_update.sh "$TAG"
 ```
 
 ### File layout on server

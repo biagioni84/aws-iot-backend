@@ -24,30 +24,46 @@ The app runs in Docker on an AWS Lightsail instance, pulled from ECR. Two script
 - `config/application.properties` in `/home/bitnami/config/`
 - AWS credentials in `/home/bitnami/.aws/credentials`
 - Both scripts (`setup_server.sh`, `deploy_update.sh`) in `/home/bitnami/`, executable (`chmod +x`)
+- The following environment variables exported (add to `~/.bashrc` or `/etc/environment`):
+
+```bash
+export ECR_REGISTRY=<account-id>.dkr.ecr.<region>.amazonaws.com
+export ECR_REPO=<your-org>/<your-app>
+export AWS_REGION=<region>
+```
 
 ---
 
 ## Build and push a new image
 
+Set the variables once in your shell (or `~/.bashrc`):
+
+```bash
+export ECR_REGISTRY=<account-id>.dkr.ecr.<region>.amazonaws.com
+export ECR_REPO=<your-org>/<your-app>
+export AWS_REGION=<region>
+export TAG=v1.01
+```
+
+Then build and push:
+
 ```bash
 # 1. Authenticate to ECR (local machine)
-aws ecr get-login-password --region us-east-1 \
-    | docker login --username AWS --password-stdin \
-      <account-id>.dkr.ecr.<region>.amazonaws.com
+aws ecr get-login-password --region "$AWS_REGION" \
+    | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
 # 2. Build
-#   --no-cache          : always compile from scratch
+#   --no-cache             : always compile from scratch
 #   --platform linux/amd64 : target Lightsail (x86_64), not local arch (e.g. ARM on M1)
-#   --provenance=false  : suppress attestation manifests — avoids ECR manifest issues
+#   --provenance=false     : suppress attestation manifests — avoids ECR manifest issues
 docker build --no-cache --platform linux/amd64 --provenance=false \
-    -t iot-cloud:v1.01 .
+    -t "app:$TAG" .
 
 # 3. Tag for ECR
-docker tag iot-cloud:v1.01 \
-    <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
+docker tag "app:$TAG" "$ECR_REGISTRY/$ECR_REPO:$TAG"
 
 # 4. Push
-docker push <account-id>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:v1.01
+docker push "$ECR_REGISTRY/$ECR_REPO:$TAG"
 ```
 
 ---
