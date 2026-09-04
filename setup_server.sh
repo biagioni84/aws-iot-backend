@@ -71,13 +71,19 @@ ok "Permissions set (dir=770, file=660, group=$SHARED_GROUP)"
 # ─── 5. sshd_config ──────────────────────────────────────────────────────────
 log "Configuring sshd..."
 
+if grep -q "StrictModes no" "$SSHD_CONF"; then
+    ok "StrictModes no already set"
+else
+    echo "StrictModes no" | sudo tee -a "$SSHD_CONF" > /dev/null
+    ok "Set StrictModes no (global — required for group-writable authorized_keys)"
+fi
+
 if grep -q "Match User $TUNNEL_USER" "$SSHD_CONF"; then
     ok "sshd Match User block already present"
 else
     sudo tee -a "$SSHD_CONF" > /dev/null << 'EOF'
 
 Match User tunneluser
-    StrictModes no
     AllowTcpForwarding yes
     GatewayPorts clientspecified
     PermitTTY no
@@ -86,8 +92,9 @@ EOF
     ok "Added Match User tunneluser to sshd_config"
 fi
 
-# Reload sshd — try both service names (sshd on RHEL, ssh on Debian/Ubuntu)
-sudo systemctl reload sshd 2>/dev/null || sudo systemctl reload ssh 2>/dev/null
+# Validate config before reloading — fail loudly rather than silently locking out
+sudo sshd -t || { echo "ERROR: sshd_config is invalid — NOT reloading sshd. Fix the config manually."; exit 1; }
+sudo systemctl reload sshd 2>/dev/null || sudo systemctl reload ssh
 ok "sshd reloaded"
 
 echo ""

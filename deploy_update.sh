@@ -9,7 +9,7 @@
 #   ./deploy_update.sh v1.01
 #
 # Prerequisites:
-#   - docker-compose.prod.yml already exists at /home/bitnami/
+#   - docker compose.prod.yml already exists at /home/bitnami/
 #   - AWS CLI configured with the ecr-puller profile
 #   - setup_server.sh has been run once before the first deploy
 # =============================================================================
@@ -23,7 +23,7 @@ TAG="${1:?Usage: ./deploy_update.sh <image-tag>  (e.g. ./deploy_update.sh v1.01)
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 ok()  { echo "[$(date '+%H:%M:%S')] ✓ $*"; }
 
-COMPOSE_FILE="/home/bitnami/docker-compose.prod.yml"
+COMPOSE_FILE="/home/ubuntu/docker-compose.prod.yml"
 
 # ─── 1. ECR login ─────────────────────────────────────────────────────────────
 log "Authenticating to ECR..."
@@ -38,10 +38,10 @@ ok "Image tag updated"
 
 # ─── 3. Pull + restart app only ───────────────────────────────────────────────
 log "Pulling new image (tag: $TAG)..."
-docker-compose -f "$COMPOSE_FILE" pull app
+docker compose -f "$COMPOSE_FILE" pull app
 
 log "Restarting app container..."
-docker-compose -f "$COMPOSE_FILE" up -d --no-deps app
+docker compose -f "$COMPOSE_FILE" up -d --no-deps app
 ok "Container restarted"
 
 # ─── 4. Cleanup ───────────────────────────────────────────────────────────────

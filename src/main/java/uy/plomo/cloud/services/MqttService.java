@@ -83,7 +83,7 @@ public class MqttService {
             public void onConnectionSuccess(Mqtt5Client client, OnConnectionSuccessReturn r) {
                 log.info("MQTT connected, reason: {}", r.getConnAckPacket().getReasonCode());
                 connected.set(true);
-                resubscribe();
+                CompletableFuture.runAsync(MqttService.this::resubscribe);
             }
 
             @Override

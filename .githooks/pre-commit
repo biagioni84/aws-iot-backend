@@ -1,0 +1,19 @@
+#!/bin/sh
+# Regenerate PROJECT_CONTEXT.md when Java sources, Flyway migrations,
+# or application config change. Skips otherwise to keep diffs clean.
+
+CHANGED=$(git diff --cached --name-only --diff-filter=ACMR)
+
+echo "$CHANGED" | grep -qE '^(src/main/java/.*\.java|src/main/resources/db/migration/.*\.sql|src/main/resources/application\.properties)$'
+if [ $? -ne 0 ]; then
+    exit 0
+fi
+
+echo "[pre-commit] Regenerating PROJECT_CONTEXT.md..."
+python generate_context.py
+if [ $? -ne 0 ]; then
+    echo "[pre-commit] generate_context.py failed — aborting commit"
+    exit 1
+fi
+
+git add PROJECT_CONTEXT.md

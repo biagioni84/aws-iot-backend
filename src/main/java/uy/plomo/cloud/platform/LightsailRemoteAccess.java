@@ -105,7 +105,13 @@ public class LightsailRemoteAccess {
     }
 
     private String buildKeyLine(String pubkey, String port) {
-        return String.format("restrict,port-forwarding,permitlisten=\"0.0.0.0:%s\" %s", port, pubkey);
+        String key = pubkey.trim();
+        if (!key.startsWith("ssh-") && !key.startsWith("ecdsa-")) {
+            if (key.startsWith("AAAAB3NzaC1yc2E"))      key = "ssh-rsa " + key;
+            else if (key.startsWith("AAAAC3NzaC1lZDI")) key = "ssh-ed25519 " + key;
+            else if (key.startsWith("AAAAE2VjZHNh"))    key = "ecdsa-sha2-nistp256 " + key;
+        }
+        return String.format("restrict,port-forwarding,permitlisten=\"0.0.0.0:%s\" %s", port, key);
     }
 
     private List<String> readAuthorizedKeys() {

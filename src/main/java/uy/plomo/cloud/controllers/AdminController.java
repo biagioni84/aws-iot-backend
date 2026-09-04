@@ -11,7 +11,6 @@ import uy.plomo.cloud.platform.LightsailRemoteAccess;
 import uy.plomo.cloud.services.GatewayService;
 import uy.plomo.cloud.services.MqttService;
 
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,7 +22,6 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 @Tag(name = "02. Info", description = "User and device data")
 public class AdminController {
-
     private final GatewayService gatewayService;
     private final MqttService mqttService;
     private final LightsailRemoteAccess lightsailRemoteAccess;
