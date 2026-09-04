@@ -16,6 +16,7 @@ Triage periodically: promote real ones to issues, prune dead ones into `## Done`
 - [2026-05-23] [DEBT] gateway-side: connects as `iot_<serial>` and sets `StrictHostKeyChecking=yes` — should be `tunneluser` + `StrictHostKeyChecking=no`, and `-R 0.0.0.0:port:...` for permitlisten to match. Tracked in gateway repo.
 - [2026-05-23] [DEBT] `generate_context.py` uses regex for Java parsing — fragile against unusual formatting. Consider tree-sitter or javalang if false positives recur.
 - [2026-05-23] [FEAT] Gateway self-registration endpoint already on CLAUDE.md roadmap (#4) — but no `POST /api/v1/gateways` handler validates pubkey format (no normalization to `ssh-rsa AAAA...`). Add validation at intake to avoid the bug above.
+- [2026-09-04] [DOC] `ECR-Deployment.md` is stale vs. actual prod setup — references `/home/bitnami/` paths, `pid: host`, `cap_add: KILL`, a `tunneluser` volume and `config/application.properties` mount that don't match the current `docker-compose.prod.yml` (`/home/ubuntu/`, no pid/cap_add, `.aws` mounted to `/home/spring/.aws:ro`, `application.properties` mounted directly). Rewrite once CI/CD pipeline work settles.
 
 ## Done
 
