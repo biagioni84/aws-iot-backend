@@ -47,7 +47,29 @@ ok "Container restarted"
 # ─── 4. Cleanup ───────────────────────────────────────────────────────────────
 docker image prune -f
 
-# ─── 5. Tail logs ─────────────────────────────────────────────────────────────
+# ─── 5. Verify / tail logs ─────────────────────────────────────────────────────
+# In CI (non-interactive), a blocking `docker logs -f` would hang the job
+# forever, so instead poll briefly for the Spring Boot startup line and exit.
+if [ "${CI:-}" = "true" ]; then
+    log "Waiting for app to report startup..."
+    for i in $(seq 1 30); do
+        if docker logs --since 2m iot-app 2>&1 | grep -qE "Started .* in [0-9.]+ seconds"; then
+            ok "App started"
+            docker logs --tail 50 iot-app
+            exit 0
+        fi
+        if ! docker ps --filter name=iot-app --filter status=running -q | grep -q .; then
+            echo "ERROR: iot-app container is not running"
+            docker logs --tail 100 iot-app || true
+            exit 1
+        fi
+        sleep 2
+    done
+    echo "ERROR: app did not report startup within timeout"
+    docker logs --tail 100 iot-app
+    exit 1
+fi
+
 echo ""
 ok "Deploy complete — tailing logs (Ctrl+C to stop)"
 sleep 2
