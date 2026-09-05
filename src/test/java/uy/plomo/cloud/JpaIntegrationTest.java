@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "aws.iot.endpoint=test-endpoint",
         "aws.iot.clientId=test-client",
         "cors.allowed-origins=http://localhost:5173",
+        "admin.api-key=test-admin-key",
         "tunnel.server.host=test-server",
         "port.pool.start=9000",
         "port.pool.end=9010",
